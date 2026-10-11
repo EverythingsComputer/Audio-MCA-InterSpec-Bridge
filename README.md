@@ -6,37 +6,46 @@ GS-USB-PRO and friends — bridged to [Sandia's InterSpec](https://github.com/sa
 
 Your USB gamma spectrometer is a smart sound card: it digitises detector pulses
 at 48 kHz / 16 bit and leaves the multi-channel analysis to software. gsbridge
-is that software — digital pulse processing on your CPU — plus a **live push
-bridge into InterSpec**: every autosave hands the freshly-written spectrum file
-to InterSpec's desktop shell, which forwards it to the already-running window,
-re-parses it from disk, and repaints. Live counts in InterSpec, no fork, no
-patch.
+is that software — digital pulse processing on your CPU — plus a **live bridge
+into InterSpec**: every autosave pushes the current spectrum into the already
+running InterSpec window, which repaints in place. Live counts, pause/resume,
+lane selection, embedded energy calibration — no fork, no patch, no code
+changes to InterSpec (one config toggle, below).
 
-## Why a file bridge?
+## How the bridge works (and why)
 
-InterSpec (open source, LGPL) has no acquisition plugin API: it is an analysis
-application. gsbridge therefore keeps 100 % of its own code outside InterSpec —
-no fork, no patch — and meets it at the file format level, using Sandia's own
-SpecUtils library for writing. What you get:
+InterSpec is an *analysis* application with no acquisition-driver API. But its
+recent builds (2026+, incl. the 1.0.x releases) ship a built-in **MCP API
+server** — `load_spectrum_file` and friends, intended for LLM tool use — that
+loads spectra directly into a running session. gsbridge drives that official
+interface:
 
-- live push into the running InterSpec window (each autosave repaints it via
-  InterSpec's own single-instance file-forwarding IPC; verified on Linux with
-  the .deb build) — or plain re-open of `gsbridge_live.spe` if you prefer
-- all of InterSpec's analysis tools on your live data: peak fitting, nuclide ID,
-  DRF/efficiency calibrations, decay calculations, dose rate…
-- the same files readable by GammaSpy, Spectrum Studio,ROOT-free python, etc.
+```
+GS-PRO-V5 ──USB audio──▶ PortAudio blocks ──▶ PulseProcessor (numpy)
+                            baseline → trigger → peak
+                            → pileup veto → PHA histogram
+                                 │  (Pause freezes here)
+                    every N s, atomic os.replace
+                                 ▼
+        gsbridge_live.spe / .spc / .n42 + gsbridge_status.json
+              │                                  │
+   InterSpec MCP API push                anything else that reads
+   (live repaint, chosen lane)           spectra (GammaSpy, python…)
+```
 
-## Features
+Everything lives outside InterSpec; it meets Sandia's app at its own public
+interfaces (MCP API, or the desktop shell's file-forwarding fallback), using
+Sandia's own SpecUtils library for writing files. What you get:
 
-- real-time digital pulse processing: baseline tracking, edge trigger,
-  parabolic peak interpolation, pile-up rejection, non-paralyzable dead time
-- outputs `.spe` (ASCII Ortec), `.spc` (binary), `.n42` (N42 2012 XML), `.pcf`
-  — atomically replaced every N seconds so readers never see partial files
-- `gsbridge_status.json` sidecar (live/real time, rates, rejections) for
-  dashboards and other programs
-- PySide6 GUI with live log-scale spectrum plot and device/threshold controls
-- CLI for headless / long runs
-- WAV replay mode: validate settings on a recorded file before running live
+- **live push** into the running InterSpec window — Foreground / Background /
+  Secondary lane of your choice, no open-as prompts, no stale displays
+- **pause / resume**: freeze counting to calibrate or inspect in InterSpec,
+  then continue accumulating into the same spectrum
+- **embedded energy calibration** so pushes keep showing keV (see below)
+- all of InterSpec's analysis tools on your live data: peak fitting, nuclide
+  ID, DRF/efficiency calibrations, decay calculations, dose rate…
+- plain `.spe`/`.spc`/`.n42` files on disk the whole time — readable by any
+  tool even with InterSpec closed
 
 ## Install
 
@@ -56,6 +65,69 @@ sudo apt install libportaudio2      # Debian/Ubuntu
 Without root you can unpack the distro package into `.local/lib` (see
 `scripts/bundle_portaudio.sh`) — gsbridge auto-loads it as a fallback.
 
+## One-time InterSpec setup (config only — no code changes)
+
+Live push uses InterSpec's MCP API, which ships **disabled**. Enable it once;
+nothing else about InterSpec is touched, and the setting survives updates. Any
+InterSpec build that contains the MCP server works (gsbridge was developed and
+verified against the Linux `.deb` 1.0.14). If your build predates the MCP API,
+everything still works via `--push-mode launch` (see fallbacks).
+
+### Option A — from inside InterSpec (GUI)
+
+1. Launch InterSpec → **Tools menu → LLM Assistant**.
+2. Open its settings/configuration panel, tick the **MCP Server** checkbox,
+   and set a bearer token (any string except the placeholder
+   `INVALID-BEARER-TOKEN`). Save/apply — the MCP server starts live; no
+   InterSpec restart needed.
+3. Give gsbridge the same token: create `~/.config/gsbridge/mcp.json`
+   containing `{"bearer_token": "<your token>"}` (or export
+   `GSBRIDGE_MCP_TOKEN`).
+
+### Option B — script it
+
+```bash
+python scripts/setup_interspec_mcp.py --token "$(openssl rand -hex 16)"
+# then restart InterSpec
+```
+
+The script enables `<McpServer><Enabled>true</Enabled>` + your token in
+`~/.config/InterSpec/llm_config.xml` (copied from the install template if you
+don't have one; existing files are backed up to `.bak`) and writes the matching
+`~/.config/gsbridge/mcp.json`. Windows: the config lives under
+`%APPDATA%\InterSpec`; macOS under `~/Library/Application Support/InterSpec`.
+
+### Option C — manual XML tweak
+
+Copy `<install>/resources/app/data/llm_config.xml` (Linux `.deb`:
+`/opt/InterSpec/resources/app/data/`) to your InterSpec user dir
+(`~/.config/InterSpec/` on Linux), then in that copy:
+
+```xml
+<McpServer version="0">
+  <Enabled>true</Enabled>
+  <BearerToken>pick-a…cret</BearerToken>
+</McpServer>
+```
+
+Restart InterSpec; its console/log shows `=== MCP Interface Enabled ===`.
+Then write the token to `~/.config/gsbridge/mcp.json` as above.
+
+### Verify
+
+```bash
+gsbridge --check
+# OK: InterSpec MCP reachable on port 34903; token accepted.
+```
+
+Notes:
+- gsbridge **auto-discovers** InterSpec's port from its listening socket — no
+  fixed-port config needed. (Do *not* set `HttpPortToServeOn` in
+  `InterSpec_app_settings.json`; on the 1.0.14 `.deb` that breaks app startup.)
+- The token protects a localhost-only endpoint; still keep it private and
+  change it if others use your machine. InterSpec's MCP server also exposes
+  analysis tools — gsbridge only ever calls `load_spectrum_file`.
+
 ## Usage
 
 ### GUI
@@ -66,8 +138,8 @@ gsbridge-gui
 
 1. Settings → device match `codec` (the GS appears as *USB Audio Codec*),
    threshold, polarity.
-2. **Start InterSpec first** (any file or empty window), then click **Start** in
-   gsbridge. With "Push each autosave…" checked (default) every save repaints
+2. **Start InterSpec first** (any file or empty window), then click **Start**
+   in gsbridge. With "Push each autosave…" checked (default) every save repaints
    the running InterSpec window in place — that's your live view. Pick the
    Foreground / Background / Secondary lane from the dropdown; no prompts ever.
 3. **Pause / Resume** anytime: Pause freezes counting (clocks stop, no pushes)
@@ -79,7 +151,7 @@ gsbridge-gui
 ### Energy calibration
 
 The "no energy calibration" notice in InterSpec is expected until you calibrate.
-Important: each MCP push replaces the foreground spectrum with the file's own
+Important: each push replaces the foreground spectrum with the file's own
 calibration, so a calibration fitted *inside InterSpec* will not survive the
 next autosave. gsbridge therefore embeds your coefficients into every file it
 writes — once set, pushes carry the calibration and nothing resets:
@@ -92,43 +164,36 @@ writes — once set, pushes carry the calibration and nothing resets:
 4. **Resume.** Pushes now carry the calibration; the warning is gone and every
    future run can reuse it (also via CLI: `--energy-cal -1.5,0.734`).
 
-Headless / scripted:
-
-```bash
-interspec &            # start the viewer once
-gsbridge --formats spe,spc,n42          # MCP push is the default
-gsbridge --lane Background              # load into background instead
-gsbridge --push-mode launch --push interspec   # old file-forward fallback
-```
-
-### One-time InterSpec setup for live (MCP) push
-
-InterSpec ships a built-in API server, disabled by default. Enable it once:
-
-1. Copy `data/llm_config.xml` from the InterSpec install directory
-   (e.g. `/opt/InterSpec/resources/app/data/llm_config.xml`) to
-   `~/.config/InterSpec/llm_config.xml`.
-2. In that copy, inside `<McpServer>`, set `<Enabled>true</Enabled>` and
-   replace `INVALID-BEARER-TOKEN` with a local token of your choice.
-3. Restart InterSpec. The log should print `=== MCP Interface Enabled ===`.
-4. Tell gsbridge the token: put `{"bearer_token": "<your token>"}` in
-   `~/.config/gsbridge/mcp.json` (or export `GSBRIDGE_MCP_TOKEN`).
-
-gsbridge auto-discovers InterSpec's port from its listening socket — no fixed
-port config needed. (Do *not* set `HttpPortToServeOn` in
-`InterSpec_app_settings.json` to work around discovery; on the 1.0.14 .deb it
-prevents the app from finishing startup.)
-
-If MCP is unavailable (disabled, or an older InterSpec build), gsbridge falls
-back once per run to the launch-cmd push and says so in the status line.
-
 ### CLI
 
 ```bash
 gsbridge --list                       # capture devices
+gsbridge --check                      # InterSpec MCP readiness
+gsbridge                              # live: acquire + MCP push (defaults)
 gsbridge --seconds 600 --formats spe,spc,n42
+gsbridge --lane Background            # push into the background lane
+gsbridge --energy-cal -1.5,0.734      # embed keV calibration
 gsbridge --wav recording.wav          # offline replay
 ```
+
+Headless with fallback push (no MCP):
+
+```bash
+interspec &                                   # start the viewer once
+gsbridge --push-mode launch --push interspec  # file-forward per autosave
+```
+
+### Push modes
+
+| mode | what it does | when to use |
+|---|---|---|
+| `mcp` (default) | posts each autosave to InterSpec's MCP API; repaints the running window in place, chosen lane, carries calibration | InterSpec 2026+ builds with MCP enabled (setup above) |
+| `launch` | runs `<cmd> <file>` (default `interspec`) per autosave; relies on the desktop shell's file forwarding | older InterSpec builds without the MCP API. Loads to Foreground only, and InterSpec's same-UUID memory dedup means later saves may not repaint until you re-open — use it as a viewer handoff, not a live feed |
+| `off` | just writes files | other tools / logging only |
+
+If MCP fails mid-run (InterSpec closed, token wrong), gsbridge says so in the
+status line and falls back to `launch` for that run; files keep saving either
+way.
 
 ## Tuning for the GS-PRO-V5
 
@@ -140,40 +205,43 @@ gsbridge --wav recording.wav          # offline replay
 | polarity | GS pulses are positive on the left channel | use `--negative` only if you inverted somewhere |
 
 Energy calibration happens **in InterSpec** (it is better at it than any
-acquisition tool): open a spectrum, fit the K-40 1460.8 keV peak or a known
-source, and save the calibration into your analysis — the raw channel scale is
-linear by construction.
+acquisition tool): pause, fit the K-40 1460.8 keV peak or a known source, paste
+the coefficients into gsbridge as above — the raw channel scale is linear by
+construction.
 
-## How it works
+## Features
 
-```
-GS-PRO-V5 ──USB audio──▶ PortAudio blocks ──▶ PulseProcessor (numpy)
-                                               baseline → trigger → peak
-                                               → pileup veto → PHA histogram
-                                                    │
-                              every N s (atomic os.replace)
-                                                    ▼
-              gsbridge_live.spe / .spc / .n42 + gsbridge_status.json
-                    │                            │
-              InterSpec (re-open file)    anything else that reads spectra
-```
+- real-time digital pulse processing: baseline tracking, edge trigger,
+  parabolic peak interpolation, pile-up rejection, non-paralyzable dead time
+- outputs `.spe` (ASCII Ortec), `.spc` (binary), `.n42` (N42 2012 XML), `.pcf`
+  — atomically replaced every N seconds so readers never see partial files
+- `gsbridge_status.json` sidecar (live/real time, rates, rejections) for
+  dashboards and other programs
+- PySide6 GUI with live log-scale spectrum plot, device/threshold controls,
+  pause/resume, lane + push-mode selectors, energy-cal field
+- CLI for headless / long runs; WAV replay mode to validate settings offline
+
+## How it works (internals)
 
 Dead time is non-paralyzable with a per-pulse window of
 `pulse-samples / rate + 1 µs`. Pile-up veto rejects pulses with another pulse
-in the decay tail or noise in the pre-trigger guard.
+in the decay tail or noise in the pre-trigger guard. Live saves pin a stable
+session UUID; push prefers `.spe` (or `.n42` when an energy calibration is
+embedded — SpecUtils' ASCII parser drops hand-written cal lines, binary/N42
+round-trip them). Pause gates the processor callback *and* the autosave/push
+loop, so InterSpec holds a frozen frame with clocks stopped.
 
 ## Limitations & roadmap
 
-- Live push uses InterSpec's built-in MCP API (`load_spectrum_file`), which
-  updates a running session in place, honors the Foreground/Background/
-  Secondary lane, and never prompts. It requires the one-time enable step
-  above (InterSpec ≥ the 2026 builds; verified on the 1.0.14 .deb). The older
-  launch/file-forward fallback (`--push-mode launch`) still exists but is
-  degraded: InterSpec's file-model dedup serves stale in-memory copies for
-  same-UUID files, so that path only repaints reliably after the first load.
+- Live push requires InterSpec with the MCP API (2026+/1.0.x builds; verified
+  on the Linux `.deb` 1.0.14). Older builds: `--push-mode launch` works as a
+  handoff viewer but not a live feed (InterSpec's file-model dedup serves stale
+  copies for same-UUID files).
 - If InterSpec is *not* running, MCP pushes fail until it starts (gsbridge
   keeps acquiring and saving regardless; start InterSpec and pushes resume on
   the next autosave).
+- The MCP endpoint also exposes InterSpec's analysis tools to localhost;
+  gsbridge never calls them. Keep your bearer token private.
 - Coincidence (right-channel) mode: not yet, though the capture layer already
   supports stereo.
 - Tested against synthetic pulses + live silent-device runs; hardware QA with a
@@ -182,5 +250,7 @@ in the decay tail or noise in the pre-trigger guard.
 ## License
 
 MIT. InterSpec and SpecUtils are Sandia National Labs (LGPL-2.1); gsbridge uses
-only their public file formats and published Python bindings and is not
-affiliated with or endorsed by Sandia.
+only their public file formats, published Python bindings, and the MCP API that
+Sandia ships (disabled by default), and is not affiliated with or endorsed by
+Sandia. No InterSpec sources are modified — enabling the bridge is a user
+config setting, exactly as Sandia intends it to be used.

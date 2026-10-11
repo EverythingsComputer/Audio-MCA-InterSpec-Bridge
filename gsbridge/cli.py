@@ -66,6 +66,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="embed keV energy calibration polynomial in saved/pushed "
                         "spectra (e.g. '-1.5,0.734' = linear); InterSpec then "
                         "shows energies without the no-calibration warning")
+    p.add_argument("--check", action="store_true",
+                   help="verify InterSpec MCP push readiness (running server + "
+                        "token) and exit")
     return p
 
 
@@ -76,6 +79,31 @@ def main(argv=None) -> int:
         for i, name in AudioStreamSource.list_inputs():
             print(f"[{i}] {name}")
         return 0
+
+    if args.check:
+        from .mcp import McpPusher
+        try:
+            p = McpPusher()
+            p._ensure()                       # port discovery + initialize
+            r = p.load.__self__               # noqa - just to keep type checkers busy
+            info = p._rpc("tools/call", {"name": "get_spectrum_info",
+                                         "arguments": {"specType": "Foreground"}})
+            print(f"OK: InterSpec MCP reachable on port {p.port}; token accepted.")
+            try:
+                txt = info["result"]["content"][0]["text"]
+                import json as _j
+                d = _j.loads(txt)
+                print(f"    foreground: {d.get('fileName')} "
+                      f"({d.get('totalCounts')} counts)")
+            except Exception:
+                pass
+            return 0
+        except Exception as e:
+            print(f"NOT READY: {e}", file=sys.stderr)
+            print("See README 'One-time InterSpec setup for live (MCP) push' — "
+                  "run scripts/setup_interspec_mcp.py to configure both sides.",
+                  file=sys.stderr)
+            return 1
 
     cfg = ProcessorConfig(threshold_adc=args.threshold,
                           posttrigger_samples=args.pulse_samples,
