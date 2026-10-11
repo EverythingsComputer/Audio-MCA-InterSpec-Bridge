@@ -50,7 +50,14 @@ class Engine:
         self._stop_saving = threading.Event()
         self.push_cmd = push_cmd
         self._push_proc = None
+        self._push_started = 0.0
         self.push_count = 0
+        # Stable identity for live saves: InterSpec treats a pushed file whose
+        # UUID matches the already-loaded measurement as an update of the same
+        # spectrum (loads straight to Foreground, no foreground/background/
+        # secondary prompt). final snapshots deliberately get no fixed uuid.
+        import uuid as _uuid
+        self.session_uuid = str(_uuid.uuid4())
 
     # ------------------------------------------------------------------ run
     def start(self) -> None:
@@ -113,12 +120,15 @@ class Engine:
         spec, stats, _ = self.snapshot()
         st_time = datetime.datetime.now().replace(microsecond=0)
         written = []
+        # pin the file UUID for live saves so InterSpec recognises repeated
+        # pushes of this session as the same measurement (no open-as prompt)
+        uid = self.session_uuid if tag == "live" else None
         for fmt in self.save_formats:
             name = f"gsbridge_{tag}.{fmt}" if tag != "live" else f"gsbridge_live.{fmt}"
             path = os.path.join(self.out_dir, name)
             write_spectrum(path, spec, stats.get("live_time", 0.0),
                            stats.get("real_time", 0.0), title=f"GS-Bridge {tag}",
-                           start_time=st_time)
+                           start_time=st_time, uuid=uid)
             written.append(path)
         # machine-readable sidecar for other tools (option-C bridge)
         with open(os.path.join(self.out_dir, "gsbridge_status.json"), "w") as f:
@@ -138,14 +148,27 @@ class Engine:
         """
         if not self.push_cmd or not paths:
             return
-        import subprocess
+        import subprocess, time as _t
         try:
-            if self._push_proc is not None and self._push_proc.poll() is None:
-                return                      # previous push still in flight; skip
-            primary = next((p for p in paths if p.endswith((".spe", ".spc", ".n42"))), paths[0])
+            # Debounce only briefly: when InterSpec is already running the
+            # invoked process forwards and exits in <1 s. On a COLD launch the
+            # invoked process *becomes* the app and never exits - so after
+            # ~5 s we must keep pushing (those invocations will forward+exit).
+            if (self._push_proc is not None and self._push_proc.poll() is None
+                    and _t.monotonic() - self._push_started < 5.0):
+                return
+            # UUID pinning (which suppresses InterSpec's open-as prompt) works
+            # for .spe and .n42; binary .spc has no header field for a UUID.
+            primary = next((p for p in paths if p.endswith((".spe", ".n42"))), None)
+            if primary is None:
+                self.last_error = ("push skipped: save .spe or .n42 "
+                                   "(UUID pinning needs a header field)")
+                return
             self._push_proc = subprocess.Popen(list(self.push_cmd) + [primary],
                                                stdout=subprocess.DEVNULL,
-                                               stderr=subprocess.DEVNULL)
+                                               stderr=subprocess.DEVNULL,
+                                               start_new_session=True)
+            self._push_started = _t.monotonic()
             self.push_count += 1
         except Exception as e:
             self.last_error = f"push failed: {e}"

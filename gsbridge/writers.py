@@ -26,7 +26,7 @@ except ImportError:  # pragma: no cover
 
 def write_spe_ascii(path: str, counts: np.ndarray, live_time: float, real_time: float,
                     title: str = "GS-Bridge live", start_time: datetime.datetime | None = None,
-                    detector: str = "GS-PRO-V5") -> None:
+                    detector: str = "GS-PRO-V5", uuid: str | None = None) -> None:
     """Ortec-style SpEC ASCII (.spe) - the most universally accepted format."""
     st = (start_time or datetime.datetime.now()).replace(microsecond=0)
     n = len(counts)
@@ -49,7 +49,12 @@ def write_spe_ascii(path: str, counts: np.ndarray, live_time: float, real_time: 
         "McaCalib0             : 0.0",
         "McaCalib1             : 1.0",
         "McaCalib2             : 0.0",
+    ]
+    if uuid:
+        lines.append(f"UUID                  : {uuid}")
+    lines += [
         "$SPEC_ID:", title,
+
         f"$DATE_COMPILED: {st.isoformat()}",
         f"$DATE_MEAS: {st.isoformat()}",
         f"$LIVETIME: {live_time:.3f}",
@@ -65,7 +70,8 @@ def write_via_specutils(path: str, counts: np.ndarray, live_time: float, real_ti
                         start_time: datetime.datetime | None = None,
                         detector: str = "GS-PRO-V5",
                         manufacturer: str = "Bee Research",
-                        model: str = "GS-PRO-V5") -> None:
+                        model: str = "GS-PRO-V5",
+                        uuid: str | None = None) -> None:
     """Write using Sandia SpecUtils bindings (fmt: 'spc', 'n42', 'pcf', 'spe')."""
     if not HAVE_SPECUTILS:
         raise RuntimeError("SpecUtils python bindings not installed")
@@ -80,6 +86,12 @@ def write_via_specutils(path: str, counts: np.ndarray, live_time: float, real_ti
 
     sf = _su.SpecFile()
     sf.addMeasurement(m, True)
+    if uuid:
+        try:
+            sf.setUuid(uuid)
+        except Exception:
+            pass
+
     try:
         sf.setInstrumentManufacturer(manufacturer)
         sf.setInstrumentModel(model)
