@@ -193,7 +193,13 @@ class Engine:
                 if self._mcp is None:
                     from .mcp import McpPusher
                     self._mcp = McpPusher()
-                self._mcp.load(primary, lane=self.lane)
+                # Pass sampleNumbers explicitly. gsbridge writes a single
+                # measurement as sample 1 (writers.py setSampleNumber(1)). If
+                # omitted, InterSpec's displayed-sample set stays empty for a
+                # freshly parsed file and its "no energy calibration for the
+                # selected samples" warning fires on every push even though the
+                # file carries a valid calibration. See McpPusher.load.
+                self._mcp.load(primary, lane=self.lane, sample_numbers=[1])
                 self.push_count += 1
                 return
             except Exception as e:

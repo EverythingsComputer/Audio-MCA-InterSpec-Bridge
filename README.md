@@ -161,8 +161,32 @@ writes — once set, pushes carry the calibration and nothing resets:
    coefficients (keV).
 3. gsbridge Settings → *Energy cal (keV)* → paste as `c0,c1[,c2,c3]` (works
    while paused — takes effect on Resume's next autosave).
-4. **Resume.** Pushes now carry the calibration; the warning is gone and every
-   future run can reuse it (also via CLI: `--energy-cal -1.5,0.734`).
+4. **Resume.** Pushes now carry the calibration and every future run can reuse
+   it (also via CLI: `--energy-cal -1.5,0.734`).
+
+Note: even with a valid embedded calibration, InterSpec shows the "Warning, no
+energy calibration for the selected samples" toast on each push unless the MCP
+call names the sample to display. gsbridge therefore always sends
+`sampleNumbers: [1]` (its files are single-measurement, sample 1). Without it,
+InterSpec's displayed-sample set is empty and its warning check
+(`suggested_sum_energy_calibration(sample_numbers)`) returns null despite the
+file carrying a valid calibration — cosmetic only, but noisy.
+
+### Live-file mode (no MCP): why it can't auto-refresh
+
+InterSpec has **no file watcher**: nothing in the app re-reads a spectrum file
+when its bytes change on disk (verified in the 1.0.x source — no `inotify` /
+filesystem-watch code; loaded spectra live in memory, and InterSpec's file
+model even dedups by UUID and serves the stale in-memory copy). So a
+"live-file" bridge that just rewrites `gsbridge_live.spe/.n42` on disk does not
+update a running InterSpec at all — you would have to close/re-open the file
+each cycle, which loses peaks, calibration state and prompts. The MCP
+`load_spectrum_file` push is what makes live updates work; there is no reliable
+keyboard shortcut that re-reads from disk (the "Ctrl+R refreshes
+live_spectrum.txt" claim does not match the 1.0.x source — Ctrl+R is not bound
+to a file reload). If you ever want it, a small optional watcher in gsbridge
+that calls `load_spectrum_file` on mtime change would give the same effect as
+the autosave push with no InterSpec changes.
 
 ### CLI
 

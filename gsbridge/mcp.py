@@ -127,19 +127,30 @@ class McpPusher:
         self._session_ready = True
 
     # -- public ---------------------------------------------------------
-    def load(self, path: str, lane: str = "Foreground") -> dict:
+    def load(self, path: str, lane: str = "Foreground",
+             sample_numbers=None) -> dict:
         """Load *path* into the running InterSpec session's *lane*.
 
         Returns the tool's JSON result dict (includes success/totalCounts).
         Raises on transport or tool failure; a failed call invalidates the
         cached session so the next call re-discovers the port (handles
         InterSpec restarts between autosaves).
+
+        sample_numbers: optional list of sample numbers to display, forwarded
+        as the ``sampleNumbers`` argument. Passing it explicitly matters: if
+        omitted, InterSpec's displayed-sample set stays empty for a freshly
+        parsed file, and its "no energy calibration for the selected samples"
+        warning fires even when the file carries a valid calibration (the check
+        calls suggested_sum_energy_calibration(sample_numbers) which returns
+        null on an empty set). See engine._push.
         """
         if lane not in DEFAULT_LANES:
             raise ValueError(f"lane must be one of {DEFAULT_LANES}")
         try:
             self._ensure()
             args: dict = {"path": os.path.abspath(path), "specType": lane}
+            if sample_numbers:
+                args["sampleNumbers"] = [int(s) for s in sample_numbers]
             if self.user_session:
                 args["userSession"] = self.user_session
             reply = self._rpc("tools/call",
