@@ -135,8 +135,9 @@ class MainWindow(QWidget):
 
         # ---- InterSpec hint
         self.hint = QLabel(
-            "InterSpec: File → Open the .spe file in the output folder, then use "
-            "the ⟳ Reload button (or reopen) to refresh from disk.")
+            "InterSpec: File → Open the .spe file in the output folder. To see newer "
+            "data, open it again (each open re-reads from disk; \"Update Displays\" "
+            "inside InterSpec only redraws the copy already loaded).")
         self.hint.setWordWrap(True)
         self.hint.setStyleSheet("padding:6px; background:#22303c; border-radius:4px;")
         layout.addWidget(self.hint)

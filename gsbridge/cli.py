@@ -11,7 +11,7 @@ Examples
   # replay a WAV captured with any recorder (validation / demo)
   python -m gsbridge --wav test.wav --formats spe,n42
 
-Then open gsbridge_live.spe in InterSpec and press the Reload button.
+Then open gsbridge_live.spe in InterSpec (re-open it any time for the latest data).
 """
 
 from __future__ import annotations
@@ -98,7 +98,7 @@ def main(argv=None) -> int:
 
     src_desc = f"WAV {wav}" if wav else f"device '{args.device}' @ {args.rate:.0f} Hz"
     print(f"acquiring from {src_desc}; writing {', '.join(fmts)} to {outdir}")
-    print("open gsbridge_live.spe in InterSpec and press Reload (⟳) to refresh.")
+    print("open gsbridge_live.spe in InterSpec; re-open it any time for the latest data.")
 
     stop = {"want": False}
 
