@@ -21,8 +21,15 @@ from .writers import HAVE_SPECUTILS, write_spectrum
 
 class Engine:
     def __init__(self, source_factory, cfg: ProcessorConfig, out_dir: str,
-                 save_formats=("spe",), autosave_s: float = 5.0):
-        """source_factory() -> object with run(callback) and stop()."""
+                 save_formats=("spe",), autosave_s: float = 5.0,
+                 push_cmd: list[str] | None = None):
+        """source_factory() -> object with run(callback) and stop().
+
+        push_cmd: if given (e.g. ["xdg-open"] or ["/path/to/InterSpec.AppImage"]),
+        executed as push_cmd + [saved_file_path] after each autosave. InterSpec's
+        desktop shell forwards a file argument to its already-running session,
+        which re-parses the file and repaints -> live display updates.
+        """
         self.source_factory = source_factory
         self.cfg = cfg
         self.out_dir = out_dir
@@ -41,6 +48,9 @@ class Engine:
         self._lock = threading.Lock()
         self._save_thread: threading.Thread | None = None
         self._stop_saving = threading.Event()
+        self.push_cmd = push_cmd
+        self._push_proc = None
+        self.push_count = 0
 
     # ------------------------------------------------------------------ run
     def start(self) -> None:
@@ -115,7 +125,30 @@ class Engine:
             json.dump({"time": st_time.isoformat(), **stats,
                        "counts_total": int(spec.sum())}, f, indent=1)
         self.last_save_at = time.monotonic()
+        if tag == "live":
+            self._push(written)
         return written
+
+    def _push(self, paths: list[str]) -> None:
+        """Hand the freshly-written file to InterSpec's desktop shell.
+
+        The previous push process must have exited (it does, once the running
+        session accepts the file); this prevents double-launching a cold-start
+        InterSpec. Push failures are non-fatal - files remain openable manually.
+        """
+        if not self.push_cmd or not paths:
+            return
+        import subprocess
+        try:
+            if self._push_proc is not None and self._push_proc.poll() is None:
+                return                      # previous push still in flight; skip
+            primary = next((p for p in paths if p.endswith((".spe", ".spc", ".n42"))), paths[0])
+            self._push_proc = subprocess.Popen(list(self.push_cmd) + [primary],
+                                               stdout=subprocess.DEVNULL,
+                                               stderr=subprocess.DEVNULL)
+            self.push_count += 1
+        except Exception as e:
+            self.last_error = f"push failed: {e}"
 
     def _saver_loop(self) -> None:
         while not self._stop_saving.wait(self.autosave_s):

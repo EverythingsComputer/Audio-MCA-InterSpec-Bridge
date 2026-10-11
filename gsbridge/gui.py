@@ -133,11 +133,27 @@ class MainWindow(QWidget):
         ctrl.addWidget(self.chk_save_n42)
         layout.addLayout(ctrl)
 
+        # ---- push-to-InterSpec row
+        pushrow = QHBoxLayout()
+        self.chk_push = QCheckBox("Push each autosave into running InterSpec window")
+        self.chk_push.setChecked(True)
+        self.push_cmd_edit = QLineEdit("interspec")
+        self.push_cmd_edit.setToolTip(
+            "Command run as `<cmd> <file>` after each autosave. InterSpec's desktop\n"
+            "shell forwards the file to its already-running session, which re-reads\n"
+            "from disk and repaints. Leave default 'interspec' if installed via .deb.")
+        self.push_cmd_edit.setMaximumWidth(220)
+        pushrow.addWidget(self.chk_push)
+        pushrow.addWidget(QLabel("cmd:"))
+        pushrow.addWidget(self.push_cmd_edit)
+        pushrow.addStretch(1)
+        layout.addLayout(pushrow)
+
         # ---- InterSpec hint
         self.hint = QLabel(
-            "InterSpec: File → Open the .spe file in the output folder. To see newer "
-            "data, open it again (each open re-reads from disk; \"Update Displays\" "
-            "inside InterSpec only redraws the copy already loaded).")
+            "Push ON: start InterSpec first (any spectrum), then Start here — each "
+            "autosave repaints the running InterSpec window.\nPush OFF: File → Open "
+            "the .spe file from the output folder; re-open it any time for latest data.")
         self.hint.setWordWrap(True)
         self.hint.setStyleSheet("padding:6px; background:#22303c; border-radius:4px;")
         layout.addWidget(self.hint)
@@ -176,7 +192,9 @@ class MainWindow(QWidget):
                 return WavSource(wav_path, blocksize=int(self.sample_rate // 10))
             return AudioStreamSource(device_match=dtxt or None, sample_rate=self.sample_rate)
 
-        self.engine = Engine(factory, self.cfg, self.out_dir, save_formats=fmts)
+        self.engine = Engine(factory, self.cfg, self.out_dir, save_formats=fmts,
+                             push_cmd=(self.push_cmd_edit.text().strip().split()
+                                       if self.chk_push.isChecked() else None))
         self.engine.sample_rate = self.sample_rate
         try:
             self.engine.start()

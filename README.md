@@ -6,12 +6,11 @@ GS-USB-PRO and friends — bridged to [Sandia's InterSpec](https://github.com/sa
 
 Your USB gamma spectrometer is a smart sound card: it digitises detector pulses
 at 48 kHz / 16 bit and leaves the multi-channel analysis to software. gsbridge
-is that software — digital pulse processing on your CPU — plus an **InterSpec
-live-file bridge**: it continuously writes standard spectrum files
-(`.spe`, `.spc`, `.n42`, `.pcf`) that InterSpec reads fresh from disk every
-time you open them (File → Open, or drag-and-drop). Note: InterSpec's
-"Update Displays" button re-renders the in-memory copy — to pick up new data,
-re-open `gsbridge_live.spe`.
+is that software — digital pulse processing on your CPU — plus a **live push
+bridge into InterSpec**: every autosave hands the freshly-written spectrum file
+to InterSpec's desktop shell, which forwards it to the already-running window,
+re-parses it from disk, and repaints. Live counts in InterSpec, no fork, no
+patch.
 
 ## Why a file bridge?
 
@@ -20,8 +19,9 @@ application. gsbridge therefore keeps 100 % of its own code outside InterSpec �
 no fork, no patch — and meets it at the file format level, using Sandia's own
 SpecUtils library for writing. What you get:
 
-- live counts streaming to disk; re-open `gsbridge_live.spe` in InterSpec for
-  the current snapshot (drag-and-drop makes it one gesture)
+- live push into the running InterSpec window (each autosave repaints it via
+  InterSpec's own single-instance file-forwarding IPC; verified on Linux with
+  the .deb build) — or plain re-open of `gsbridge_live.spe` if you prefer
 - all of InterSpec's analysis tools on your live data: peak fitting, nuclide ID,
   DRF/efficiency calibrations, decay calculations, dose rate…
 - the same files readable by GammaSpy, Spectrum Studio,ROOT-free python, etc.
@@ -66,10 +66,20 @@ gsbridge-gui
 
 1. Settings → device match `codec` (the GS appears as *USB Audio Codec*),
    threshold, polarity.
-2. **Start**. The spectrum forms in the plot; files land in
-   `~/Documents/GS-Bridge-output/`.
-3. In InterSpec: File → Open `gsbridge_live.spe`. To see newer data, open it
-   again (or drag the file onto the window) — each open re-reads from disk.
+2. **Start InterSpec first** (any file or empty window), then click **Start** in
+   gsbridge. With "Push each autosave…" checked (default), every save repaints
+   the running InterSpec window with current counts — that's your live view.
+3. To keep a frozen sample for analysis: stop acquisition and open
+   `gsbridge_final.spe` (written once on exit, never pushed over).
+
+Headless / scripted:
+
+```bash
+interspec &            # start the viewer once
+gsbridge --push interspec --formats spe,spc,n42
+```
+
+(`--push xdg-open` also works once InterSpec owns the `.spe` mime type.)
 
 ### CLI
 
@@ -113,12 +123,11 @@ in the decay tail or noise in the pre-trigger guard.
 
 ## Limitations & roadmap
 
-- Refresh in InterSpec means re-opening the file: InterSpec has no file watcher
-  and its "Update Displays" button only re-renders the in-memory copy. An
-  auto-push bridge would require reverse-engineering InterSpec's private
-  embedded-server protocol; file polling keeps this project stable across
-  InterSpec releases. (A future gsbridge release could add a tiny helper that
-  invokes `xdg-open`/`interspec://` on each autosave for one-keystroke refresh.)
+- Push relies on InterSpec's desktop shell forwarding a file argument to its
+  running session (single-instance IPC; verified with the Linux .deb/Electron
+  build). If InterSpec is *not* already running, each push cold-launches it —
+  start InterSpec once before acquiring. True in-session streaming would need
+  Sandia to expose an acquisition API; this uses only their public shell path.
 - Coincidence (right-channel) mode: not yet, though the capture layer already
   supports stereo.
 - Tested against synthetic pulses + live silent-device runs; hardware QA with a
