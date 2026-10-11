@@ -128,6 +128,11 @@ in the decay tail or noise in the pre-trigger guard.
   build). If InterSpec is *not* already running, each push cold-launches it —
   start InterSpec once before acquiring. True in-session streaming would need
   Sandia to expose an acquisition API; this uses only their public shell path.
+- The Foreground/Background/Secondary "how to open?" prompt is suppressed for
+  pushed live files by pinning a stable UUID inside `gsbridge_live.spe`/`.n42`
+  (InterSpec treats same-UUID pushes as updates of the loaded spectrum). Binary
+  `.spc` has no UUID header field — keep `.spe` or `.n42` in your save formats
+  when using push.
 - Coincidence (right-channel) mode: not yet, though the capture layer already
   supports stereo.
 - Tested against synthetic pulses + live silent-device runs; hardware QA with a
