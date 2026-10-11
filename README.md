@@ -67,8 +67,9 @@ gsbridge-gui
 1. Settings → device match `codec` (the GS appears as *USB Audio Codec*),
    threshold, polarity.
 2. **Start InterSpec first** (any file or empty window), then click **Start** in
-   gsbridge. With "Push each autosave…" checked (default), every save repaints
-   the running InterSpec window with current counts — that's your live view.
+   gsbridge. With "Push each autosave…" checked (default) every save repaints
+   the running InterSpec window in place — that's your live view. Pick the
+   Foreground / Background / Secondary lane from the dropdown; no prompts ever.
 3. To keep a frozen sample for analysis: stop acquisition and open
    `gsbridge_final.spe` (written once on exit, never pushed over).
 
@@ -76,10 +77,31 @@ Headless / scripted:
 
 ```bash
 interspec &            # start the viewer once
-gsbridge --push interspec --formats spe,spc,n42
+gsbridge --formats spe,spc,n42          # MCP push is the default
+gsbridge --lane Background              # load into background instead
+gsbridge --push-mode launch --push interspec   # old file-forward fallback
 ```
 
-(`--push xdg-open` also works once InterSpec owns the `.spe` mime type.)
+### One-time InterSpec setup for live (MCP) push
+
+InterSpec ships a built-in API server, disabled by default. Enable it once:
+
+1. Copy `data/llm_config.xml` from the InterSpec install directory
+   (e.g. `/opt/InterSpec/resources/app/data/llm_config.xml`) to
+   `~/.config/InterSpec/llm_config.xml`.
+2. In that copy, inside `<McpServer>`, set `<Enabled>true</Enabled>` and
+   replace `INVALID-BEARER-TOKEN` with a local token of your choice.
+3. Restart InterSpec. The log should print `=== MCP Interface Enabled ===`.
+4. Tell gsbridge the token: put `{"bearer_token": "<your token>"}` in
+   `~/.config/gsbridge/mcp.json` (or export `GSBRIDGE_MCP_TOKEN`).
+
+gsbridge auto-discovers InterSpec's port from its listening socket — no fixed
+port config needed. (Do *not* set `HttpPortToServeOn` in
+`InterSpec_app_settings.json` to work around discovery; on the 1.0.14 .deb it
+prevents the app from finishing startup.)
+
+If MCP is unavailable (disabled, or an older InterSpec build), gsbridge falls
+back once per run to the launch-cmd push and says so in the status line.
 
 ### CLI
 
@@ -123,16 +145,16 @@ in the decay tail or noise in the pre-trigger guard.
 
 ## Limitations & roadmap
 
-- Push relies on InterSpec's desktop shell forwarding a file argument to its
-  running session (single-instance IPC; verified with the Linux .deb/Electron
-  build). If InterSpec is *not* already running, each push cold-launches it —
-  start InterSpec once before acquiring. True in-session streaming would need
-  Sandia to expose an acquisition API; this uses only their public shell path.
-- The Foreground/Background/Secondary "how to open?" prompt is suppressed for
-  pushed live files by pinning a stable UUID inside `gsbridge_live.spe`/`.n42`
-  (InterSpec treats same-UUID pushes as updates of the loaded spectrum). Binary
-  `.spc` has no UUID header field — keep `.spe` or `.n42` in your save formats
-  when using push.
+- Live push uses InterSpec's built-in MCP API (`load_spectrum_file`), which
+  updates a running session in place, honors the Foreground/Background/
+  Secondary lane, and never prompts. It requires the one-time enable step
+  above (InterSpec ≥ the 2026 builds; verified on the 1.0.14 .deb). The older
+  launch/file-forward fallback (`--push-mode launch`) still exists but is
+  degraded: InterSpec's file-model dedup serves stale in-memory copies for
+  same-UUID files, so that path only repaints reliably after the first load.
+- If InterSpec is *not* running, MCP pushes fail until it starts (gsbridge
+  keeps acquiring and saving regardless; start InterSpec and pushes resume on
+  the next autosave).
 - Coincidence (right-channel) mode: not yet, though the capture layer already
   supports stereo.
 - Tested against synthetic pulses + live silent-device runs; hardware QA with a

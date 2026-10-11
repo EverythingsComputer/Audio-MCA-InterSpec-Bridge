@@ -137,13 +137,26 @@ class MainWindow(QWidget):
         pushrow = QHBoxLayout()
         self.chk_push = QCheckBox("Push each autosave into running InterSpec window")
         self.chk_push.setChecked(True)
+        self.push_mode_combo = QComboBox()
+        self.push_mode_combo.addItems(["MCP API (live repaint)", "Launch cmd (fallback)"])
+        self.push_mode_combo.setToolTip(
+            "MCP API: posts each autosave to InterSpec's built-in MCP server\n"
+            "(load_spectrum_file) - updates the visible window in place, no prompts,\n"
+            "and honors the lane selector. Requires enabling MCP once in InterSpec\n"
+            "(see README).\n\n"
+            "Launch cmd: runs `<cmd> <file>` after each autosave; relies on the\n"
+            "desktop shell's file forwarding (loads to Foreground only).")
+        self.lane_combo = QComboBox()
+        self.lane_combo.addItems(["Foreground", "Background", "Secondary"])
+        self.lane_combo.setToolTip("Which InterSpec slot to load into (MCP mode).")
         self.push_cmd_edit = QLineEdit("interspec")
         self.push_cmd_edit.setToolTip(
-            "Command run as `<cmd> <file>` after each autosave. InterSpec's desktop\n"
-            "shell forwards the file to its already-running session, which re-reads\n"
-            "from disk and repaints. Leave default 'interspec' if installed via .deb.")
-        self.push_cmd_edit.setMaximumWidth(220)
+            "Fallback command run as `<cmd> <file>` after each autosave.")
+        self.push_cmd_edit.setMaximumWidth(140)
         pushrow.addWidget(self.chk_push)
+        pushrow.addWidget(self.push_mode_combo)
+        pushrow.addWidget(QLabel("lane:"))
+        pushrow.addWidget(self.lane_combo)
         pushrow.addWidget(QLabel("cmd:"))
         pushrow.addWidget(self.push_cmd_edit)
         pushrow.addStretch(1)
@@ -151,9 +164,10 @@ class MainWindow(QWidget):
 
         # ---- InterSpec hint
         self.hint = QLabel(
-            "Push ON: start InterSpec first (any spectrum), then Start here — each "
-            "autosave repaints the running InterSpec window.\nPush OFF: File → Open "
-            "the .spe file from the output folder; re-open it any time for latest data.")
+            "Push ON (MCP): start InterSpec first, then Start here — each autosave\n"
+            "repaints the running window in place, into the chosen lane, no prompts.\n"
+            "Needs MCP enabled once in InterSpec (see README). Launch-cmd mode is a\n"
+            "fallback for older InterSpec builds. Push OFF: open the .spe manually.")
         self.hint.setWordWrap(True)
         self.hint.setStyleSheet("padding:6px; background:#22303c; border-radius:4px;")
         layout.addWidget(self.hint)
@@ -192,9 +206,12 @@ class MainWindow(QWidget):
                 return WavSource(wav_path, blocksize=int(self.sample_rate // 10))
             return AudioStreamSource(device_match=dtxt or None, sample_rate=self.sample_rate)
 
+        mode = ("mcp" if self.push_mode_combo.currentIndex() == 0 else "launch") \
+            if self.chk_push.isChecked() else "off"
         self.engine = Engine(factory, self.cfg, self.out_dir, save_formats=fmts,
-                             push_cmd=(self.push_cmd_edit.text().strip().split()
-                                       if self.chk_push.isChecked() else None))
+                             push_cmd=self.push_cmd_edit.text().strip().split()
+                             or ["interspec"],
+                             push_mode=mode, lane=self.lane_combo.currentText())
         self.engine.sample_rate = self.sample_rate
         try:
             self.engine.start()

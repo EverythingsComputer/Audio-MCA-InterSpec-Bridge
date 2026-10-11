@@ -52,9 +52,16 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--channels", type=int, default=4096, help="MCA channel count")
     p.add_argument("--negative", action="store_true", help="pulses are negative-going")
     p.add_argument("--push", metavar="CMD", default=None,
-                   help="after each autosave run CMD <file> to push updates into a "
-                        "running InterSpec window (e.g. 'xdg-open' after installing "
-                        "the InterSpec .deb, or the path to InterSpec.AppImage)")
+                   help="fallback push: after each autosave run CMD <file> (e.g. "
+                        "'interspec' or 'xdg-open'); used when --push-mode launch "
+                        "or when the MCP API is unavailable")
+    p.add_argument("--push-mode", choices=("mcp", "launch", "off"), default="mcp",
+                   help="how autosaves reach InterSpec: 'mcp' (default) posts to "
+                        "InterSpec's built-in MCP API and repaints the running "
+                        "window in place; 'launch' uses --push CMD; 'off' disables")
+    p.add_argument("--lane", choices=("Foreground", "Background", "Secondary"),
+                   default="Foreground", help="which InterSpec slot to load into "
+                   "(MCP mode only)")
     return p
 
 
@@ -90,9 +97,10 @@ def main(argv=None) -> int:
                                  channel=args.channel)
 
     import os
-    push_cmd = args.push.split() if args.push else None
+    push_cmd = args.push.split() if args.push else ["interspec"]
     engine = Engine(factory, cfg, outdir := os.path.expanduser(args.outdir),
-                    save_formats=fmts, autosave_s=args.autosave, push_cmd=push_cmd)
+                    save_formats=fmts, autosave_s=args.autosave, push_cmd=push_cmd,
+                    push_mode=args.push_mode, lane=args.lane)
     engine.sample_rate = args.rate
 
     try:
