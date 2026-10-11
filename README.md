@@ -12,6 +12,49 @@ running InterSpec window, which repaints in place. Live counts, pause/resume,
 lane selection, embedded energy calibration — no fork, no patch, no code
 changes to InterSpec (one config toggle, below).
 
+## Quick start
+
+**Prereqs:** [InterSpec](https://github.com/sandialabs/InterSpec) 1.0.x (a
+build with the MCP API; verified on Linux `.deb` 1.0.14), Python ≥ 3.10, and
+your GS-PRO-V5/GS-USB-PRO plugged in.
+
+```bash
+# 1. Get gsbridge — either a release bundle (GitHub Releases) or from source:
+git clone https://github.com/<you>/gsbridge && cd gsbridge
+python3 -m venv .venv && source .venv/bin/activate
+pip install -e ".[gui,specutils]"
+#    Linux only, if PortAudio is missing:  sudo apt install libportaudio2
+
+# 2. One-time InterSpec setup (enables the MCP API + writes gsbridge's token):
+python scripts/setup_interspec_mcp.py --token "$(openssl rand -hex 16)"
+#    then restart InterSpec (or enable it via Tools → LLM Assistant in the GUI)
+
+# 3. Verify:
+gsbridge --check
+#    OK: InterSpec MCP reachable on port NNNNN; token accepted.
+
+# 4. Run — start InterSpec first, then:
+gsbridge-gui          # or headless: gsbridge
+```
+
+In the GUI: **Start** begins acquisition; every autosave repaints the running
+InterSpec window in place (no prompts). Pause to calibrate/inspect, Resume to
+continue into the same spectrum. Paste your energy-cal coefficients into
+Settings → *Energy cal (keV)* so pushes carry keV (details below).
+
+## Getting the app
+
+- **Prebuilt bundles** (recommended): see [GitHub Releases](../releases). Each
+  release has a bundle for Windows (`gsbridge-win64.zip`), macOS
+  (`gsbridge-macos-arm64.app.tar.gz`, `gsbridge-macos-x86_64.app.tar.gz`) and
+  Linux (`gsbridge-linux-x86_64.tar.gz`). Unpack, run — no Python needed.
+  Each bundle is a single `gsbridge` executable: **no arguments opens the
+  GUI**; pass flags (`--list`, `--wav …`, `--seconds …`) for headless CLI use
+  (see [CLI](#cli)). On macOS it's a proper `.app`; on Linux and Windows the
+  archive contains a self-contained folder.
+- **From source**: see [Install](#install) below (installs `gsbridge` and
+  `gsbridge-gui` entry points; `gsbridge` with no args opens the GUI too).
+
 ## How the bridge works (and why)
 
 InterSpec is an *analysis* application with no acquisition-driver API. But its
@@ -200,19 +243,19 @@ gsbridge --energy-cal -1.5,0.734      # embed keV calibration
 gsbridge --wav recording.wav          # offline replay
 ```
 
-Headless with fallback push (no MCP):
+Headless, no MCP (older InterSpec builds — one-time handoff only):
 
 ```bash
 interspec &                                   # start the viewer once
-gsbridge --push-mode launch --push interspec  # file-forward per autosave
+gsbridge --push-mode launch --push interspec  # forwards the first autosave
 ```
 
 ### Push modes
 
 | mode | what it does | when to use |
 |---|---|---|
-| `mcp` (default) | posts each autosave to InterSpec's MCP API; repaints the running window in place, chosen lane, carries calibration | InterSpec 2026+ builds with MCP enabled (setup above) |
-| `launch` | runs `<cmd> <file>` (default `interspec`) per autosave; relies on the desktop shell's file forwarding | older InterSpec builds without the MCP API. Loads to Foreground only, and InterSpec's same-UUID memory dedup means later saves may not repaint until you re-open — use it as a viewer handoff, not a live feed |
+| `mcp` (default) | posts each autosave to InterSpec's MCP API; repaints the running window in place, chosen lane, carries calibration | InterSpec 2026+ builds with MCP enabled (setup above). **The live feed.** |
+| `launch` | runs `<cmd> <file>` (default `interspec`) per autosave via the desktop shell's file forwarding | older InterSpec builds without the MCP API — as a **one-time handoff** only. Measured against 1.0.14: it loads a file into an *empty* InterSpec and re-renders a file that is *already displayed* (same path+UUID, once per session); repeated pushes of the same live file are ignored by InterSpec's file model, and a new file each cycle raises an open-as prompt. Foreground lane only. Not a live feed. |
 | `off` | just writes files | other tools / logging only |
 
 If MCP fails mid-run (InterSpec closed, token wrong), gsbridge says so in the
@@ -259,8 +302,7 @@ loop, so InterSpec holds a frozen frame with clocks stopped.
 
 - Live push requires InterSpec with the MCP API (2026+/1.0.x builds; verified
   on the Linux `.deb` 1.0.14). Older builds: `--push-mode launch` works as a
-  handoff viewer but not a live feed (InterSpec's file-model dedup serves stale
-  copies for same-UUID files).
+  one-time handoff only (see the Push modes table) — not a live feed.
 - If InterSpec is *not* running, MCP pushes fail until it starts (gsbridge
   keeps acquiring and saving regardless; start InterSpec and pushes resume on
   the next autosave).

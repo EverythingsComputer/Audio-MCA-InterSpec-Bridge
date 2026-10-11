@@ -45,9 +45,30 @@ DEFAULT_LANES = ("Foreground", "Background", "Secondary")
 def discover_port() -> int | None:
     """Return the TCP port the running interspec process listens on, or None.
 
-    Uses only /proc (Linux): find pids whose exe is *interspec, then match
-    their socket inodes against /proc/net/tcp LISTEN entries on 127.0.0.1.
+    Implemented per-platform with stdlib only:
+      Linux   : /proc (exe link + socket inodes vs /proc/net/tcp LISTEN)
+      macOS   : lsof -nP -iTCP -sTCP:LISTEN, matched on the process name
+      Windows : netstat -ano (LISTEN ports + PIDs) + tasklist (PID -> image)
+
+    The port is ephemeral (InterSpec picks a free one at startup), so this is
+    re-run lazily on every new push session; an explicit ``port`` in
+    ~/.config/gsbridge/mcp.json (or GSBRIDGE_MCP_PORT) always wins.
     """
+    import platform
+    system = platform.system()
+
+    if system == "Linux":
+        return _discover_port_linux()
+    if system == "Darwin":
+        return _discover_port_macos()
+    if system == "Windows":
+        return _discover_port_windows()
+    return None
+
+
+def _discover_port_linux() -> int | None:
+    """Find pids whose exe is *interspec, then match their socket inodes
+    against /proc/net/tcp LISTEN entries on 127.0.0.1."""
     inodes: set[str] = set()
     for pid_dir in glob.glob("/proc/[0-9]*"):
         try:
@@ -87,14 +108,84 @@ def discover_port() -> int | None:
     return None
 
 
+def _discover_port_macos() -> int | None:
+    """lsof LISTEN sockets on 127.0.0.1 owned by a process named interspec."""
+    import subprocess
+    try:
+        out = subprocess.run(
+            ["lsof", "-nP", "-iTCP", "-sTCP:LISTEN"],
+            capture_output=True, text=True, timeout=5).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    for line in out.splitlines()[1:]:
+        parts = line.split()
+        if len(parts) < 9 or parts[0].lower() != "interspec":
+            continue
+        # NAME column looks like 127.0.0.1:46633 (or *:port, [::1]:port)
+        name = parts[8]
+        if ":" not in name:
+            continue
+        host, _, port = name.rpartition(":")
+        if host not in ("127.0.0.1", "localhost", "*", "[::1]", "::1"):
+            continue
+        try:
+            return int(port)
+        except ValueError:
+            continue
+    return None
+
+
+def _discover_port_windows() -> int | None:
+    """netstat LISTEN ports + owning PIDs, then tasklist PID -> interspec."""
+    import subprocess
+    try:
+        net = subprocess.run(["netstat", "-ano"], capture_output=True,
+                             text=True, timeout=8).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    ports_by_pid: dict[str, list[int]] = {}
+    for line in net.splitlines():
+        parts = line.split()
+        if len(parts) < 5 or parts[0].upper() != "TCP":
+            continue
+        local, state, pid = parts[1], parts[3], parts[4]
+        if state.upper() != "LISTENING" or not pid.isdigit():
+            continue
+        host, _, port = local.rpartition(":")
+        if host not in ("127.0.0.1", "[::1]", "::1"):
+            continue
+        try:
+            ports_by_pid.setdefault(pid, []).append(int(port))
+        except ValueError:
+            continue
+    if not ports_by_pid:
+        return None
+    try:
+        task = subprocess.run(["tasklist", "/FO", "CSV", "/NH"],
+                              capture_output=True, text=True, timeout=8).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    for line in task.splitlines():
+        parts = [p.strip('"') for p in line.split('",')]
+        if len(parts) < 2 or parts[0].lower() not in ("interspec.exe", "interspec"):
+            continue
+        if parts[1] in ports_by_pid:
+            return min(ports_by_pid[parts[1]])
+    return None
+
+
 class McpPusher:
     """Minimal MCP-over-HTTP client for InterSpec's load_spectrum_file tool."""
 
     def __init__(self, bearer_token: str | None = None,
-                 user_session: str | None = None, timeout: float = 4.0):
+                 user_session: str | None = None, timeout: float = 4.0,
+                 port: int | None = None):
         self.token = bearer_token if bearer_token is not None else _read_token()
         self.user_session = user_session
         self.timeout = timeout
+        # explicit port wins over auto-discovery (config "port" or
+        # GSBRIDGE_MCP_PORT); otherwise discovered per session
+        self.fixed_port = port if port is not None else _read_port()
         self.port: int | None = None
         self._session_ready = False
         self._req_id = 0
@@ -116,7 +207,7 @@ class McpPusher:
     def _ensure(self):
         if self._session_ready:
             return
-        self.port = discover_port()
+        self.port = self.fixed_port or discover_port()
         if self.port is None:
             raise ConnectionError("interspec not running (no listening socket found)")
         reply = self._rpc("initialize", {
@@ -168,13 +259,40 @@ class McpPusher:
         return result
 
 
+def _config_dir() -> str:
+    """gsbridge's per-user config dir (platform-appropriate)."""
+    if os.name == "nt":
+        return os.path.join(os.environ.get("APPDATA",
+                                           os.path.expanduser("~")), "gsbridge")
+    xdg = os.environ.get("XDG_CONFIG_HOME")
+    return os.path.join(xdg or os.path.expanduser("~/.config"), "gsbridge")
+
+
+def _mcp_config() -> dict:
+    try:
+        with open(os.path.join(_config_dir(), "mcp.json")) as fh:
+            data = json.load(fh)
+            return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
 def _read_token() -> str:
     env = os.environ.get("GSBRIDGE_MCP_TOKEN")
     if env:
         return env
-    cfg = os.path.expanduser("~/.config/gsbridge/mcp.json")
+    return _mcp_config().get("bearer_token", "") or ""
+
+
+def _read_port() -> int | None:
+    """Optional explicit port override (env first, then mcp.json "port")."""
+    env = os.environ.get("GSBRIDGE_MCP_PORT")
+    if env:
+        try:
+            return int(env)
+        except ValueError:
+            pass
     try:
-        with open(cfg) as fh:
-            return json.load(fh).get("bearer_token", "") or ""
-    except (OSError, ValueError):
-        return ""
+        return int(_mcp_config().get("port"))
+    except (TypeError, ValueError):
+        return None

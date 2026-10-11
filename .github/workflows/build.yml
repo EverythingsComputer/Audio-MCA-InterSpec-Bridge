@@ -1,0 +1,127 @@
+# Build gsbridge bundles for Windows / macOS (arm64 + x86_64) / Linux and
+# attach them to a GitHub Release.
+#
+# Triggers: pushing a tag like v0.2.0, or manually from the Actions tab
+# (workflow_dispatch builds artifacts without publishing a release).
+name: Build release bundles
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write   # create releases + upload assets
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04          # older glibc for wider Linux compat
+            label: linux-x86_64
+          - os: macos-14              # Apple Silicon
+            label: macos-arm64
+          - os: macos-13              # Intel
+            label: macos-x86_64
+          - os: windows-2022
+            label: win64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install deps (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[gui,specutils]" pyinstaller
+
+      - name: Install deps (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          # sandiaspecutils ships win_amd64 wheels for cp312 (abi3)
+          pip install -e ".[gui,specutils]" pyinstaller
+
+      - name: Bundle PortAudio libs (Linux only)
+        if: runner.os == 'Linux'
+        run: |
+          # build_release.sh copies .local/lib/*.so into the bundle so end
+          # users need no libportaudio2. scripts/bundle_portaudio.sh fetches
+          # them via apt-get download (no sudo needed).
+          chmod +x scripts/bundle_portaudio.sh
+          ./scripts/bundle_portaudio.sh
+          ls -la .local/lib
+
+      - name: Build bundle (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          chmod +x scripts/build_release.sh
+          ./scripts/build_release.sh
+          ls -la dist/
+
+      - name: Build bundle (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # build_release.sh is bash; replicate its Windows branch in pwsh.
+          python -m PyInstaller --noconfirm gsbridge.spec
+          $ver = python -c "import gsbridge; print(gsbridge.__version__)"
+          $dist = "dist/gsbridge-$ver"
+          if (Test-Path $dist) { Remove-Item -Recurse -Force $dist }
+          Copy-Item -Recurse dist/gsbridge-app $dist
+          Copy-Item README.md LICENSE $dist
+          Compress-Archive -Path $dist -DestinationPath "dist/gsbridge-win64.zip"
+          Get-ChildItem dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gsbridge-${{ matrix.label }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+          if-no-files-found: error
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: gsbridge-*
+          merge-multiple: true
+          path: assets
+
+      - name: Show assets
+        run: ls -la assets
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            assets/gsbridge-linux-x86_64.tar.gz
+            assets/gsbridge-macos-arm64.app.tar.gz
+            assets/gsbridge-macos-x86_64.app.tar.gz
+            assets/gsbridge-win64.zip
+          generate_release_notes: true
+          body: |
+            Prebuilt gsbridge bundles. Each archive contains a single
+            `gsbridge` executable: run with **no arguments** to open the GUI,
+            or pass flags for headless CLI use (`--list`, `--wav FILE`, …).
+
+            - **Windows**: unzip, run `gsbridge\gsbridge.exe`.
+            - **macOS**: unpack, drag `gsbridge.app` to Applications. It is
+              ad-hoc signed (not notarized): first launch via right-click →
+              Open, or `xattr -dr com.apple.quarantine gsbridge.app`.
+            - **Linux**: unpack, run `./gsbridge-*/gsbridge`
+              (PortAudio + libjack are bundled; no system packages needed).
+
+            Requires InterSpec 1.0.x with the MCP API enabled for live push —
+            see README "Quick start".

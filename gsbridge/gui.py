@@ -155,20 +155,28 @@ class MainWindow(QWidget):
         self.chk_push = QCheckBox("Push each autosave into running InterSpec window")
         self.chk_push.setChecked(True)
         self.push_mode_combo = QComboBox()
-        self.push_mode_combo.addItems(["MCP API (live repaint)", "Launch cmd (fallback)"])
-        self.push_mode_combo.setToolTip(
-            "MCP API: posts each autosave to InterSpec's built-in MCP server\n"
-            "(load_spectrum_file) - updates the visible window in place, no prompts,\n"
-            "and honors the lane selector. Requires enabling MCP once in InterSpec\n"
-            "(see README).\n\n"
-            "Launch cmd: runs `<cmd> <file>` after each autosave; relies on the\n"
-            "desktop shell's file forwarding (loads to Foreground only).")
+        self.push_mode_combo.addItems([
+            "MCP API (live repaint)",
+            "Launch cmd (one-time handoff)"])
+        self.push_mode_combo.setToolTip("""
+MCP API: posts each autosave to InterSpec's built-in MCP server
+(load_spectrum_file) - updates the visible window in place, no prompts,
+and honors the lane selector. Requires enabling MCP once in InterSpec
+(see README). This is the live feed.
+
+Launch cmd: runs `<cmd> <file>` after each autosave. Works as a ONE-TIME
+handoff into an empty InterSpec, and re-renders a file that is ALREADY
+displayed (same path+UUID, once per session). It does NOT work as a live
+feed: repeated pushes of the same file are ignored by InterSpec's file
+model, and a new file each cycle triggers an open-as prompt. Use only for
+older InterSpec builds without MCP.""")
         self.lane_combo = QComboBox()
         self.lane_combo.addItems(["Foreground", "Background", "Secondary"])
         self.lane_combo.setToolTip("Which InterSpec slot to load into (MCP mode).")
         self.push_cmd_edit = QLineEdit("interspec")
         self.push_cmd_edit.setToolTip(
-            "Fallback command run as `<cmd> <file>` after each autosave.")
+            "Command run as `<cmd> <file>` after each autosave in launch-cmd "
+            "mode (one-time handoff only - see mode tooltip).")
         self.push_cmd_edit.setMaximumWidth(140)
         pushrow.addWidget(self.chk_push)
         pushrow.addWidget(self.push_mode_combo)
@@ -184,7 +192,8 @@ class MainWindow(QWidget):
             "Push ON (MCP): start InterSpec first, then Start here — each autosave\n"
             "repaints the running window in place, into the chosen lane, no prompts.\n"
             "Needs MCP enabled once in InterSpec (see README). Launch-cmd mode is a\n"
-            "fallback for older InterSpec builds. Push OFF: open the .spe manually.")
+            "one-time handoff for older InterSpec builds without MCP (not a live feed).\n"
+            "Push OFF: open the .spe manually.")
         self.hint.setWordWrap(True)
         self.hint.setStyleSheet("padding:6px; background:#22303c; border-radius:4px;")
         layout.addWidget(self.hint)

@@ -52,13 +52,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--channels", type=int, default=4096, help="MCA channel count")
     p.add_argument("--negative", action="store_true", help="pulses are negative-going")
     p.add_argument("--push", metavar="CMD", default=None,
-                   help="fallback push: after each autosave run CMD <file> (e.g. "
-                        "'interspec' or 'xdg-open'); used when --push-mode launch "
-                        "or when the MCP API is unavailable")
+                   help="launch-cmd mode: after each autosave run CMD <file> "
+                        "(e.g. 'interspec'). One-time handoff only (see README); "
+                        "also used as the fallback if MCP push fails")
     p.add_argument("--push-mode", choices=("mcp", "launch", "off"), default="mcp",
                    help="how autosaves reach InterSpec: 'mcp' (default) posts to "
                         "InterSpec's built-in MCP API and repaints the running "
-                        "window in place; 'launch' uses --push CMD; 'off' disables")
+                        "window in place; 'launch' uses --push CMD (one-time "
+                        "handoff, not a live feed); 'off' disables")
     p.add_argument("--lane", choices=("Foreground", "Background", "Secondary"),
                    default="Foreground", help="which InterSpec slot to load into "
                    "(MCP mode only)")
@@ -74,6 +75,13 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
+
+    # No flags at all -> open the GUI (this is also how the frozen bundle's
+    # double-click launch works; pass --help for usage, any flag for CLI mode).
+    if argv is None and not sys.argv[1:]:
+        from .gui import main as gui_main
+        gui_main()
+        return 0
 
     if args.list:
         for i, name in AudioStreamSource.list_inputs():

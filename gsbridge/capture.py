@@ -15,20 +15,51 @@ import numpy as np
 
 
 def preload_portaudio() -> None:
-    """If PortAudio isn't system-installed, try the bundled copy in
-    <repo>/.local/lib before sounddevice gives up (see scripts/bundle_portaudio.sh)."""
+    """If PortAudio isn't system-installed, try a bundled copy before
+    sounddevice gives up (see scripts/bundle_portaudio.sh).
+
+    Search order: PyInstaller bundle dir (_MEIPASS), then <repo>/.local/lib.
+    On Windows/macOS the sounddevice wheel already ships PortAudio; this path
+    matters mainly for Linux builds without libportaudio2 installed.
+    """
     import ctypes
     import ctypes.util
     import os
-    if ctypes.util.find_library("portaudio"):
-        return
-    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    libdir = os.path.join(here, ".local", "lib")
-    pa = os.path.join(libdir, "libportaudio.so.2")
-    if not os.path.exists(pa):
-        return
+    import sys
+    # In a frozen (PyInstaller) bundle, prefer the BUNDLED copy even if the
+    # system has one: that keeps the app self-contained and identical across
+    # machines. Outside a bundle, use the system library when present.
+    meipass = getattr(sys, "_MEIPASS", None)
+    bundled = None
+    if meipass:
+        for n in ("libportaudio.so.2", "libportaudio.so"):
+            cand = os.path.join(meipass, "gsbridge_libs", n)
+            if os.path.exists(cand):
+                bundled = cand
+                break
+        if bundled is None:
+            cand = os.path.join(meipass, "gsbridge_libs", "portaudio.dll")
+            if os.path.exists(cand):
+                bundled = cand
+    if meipass is not None and bundled is not None:
+        pa = bundled                    # frozen: always use the bundle
+    elif ctypes.util.find_library("portaudio"):
+        return                          # unfrozen + system lib present
+    else:
+        # unfrozen, no system lib -> try <repo>/.local/lib (no-root installs)
+        here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        libdir = os.path.join(here, ".local", "lib")
+        pa = None
+        for n in ("libportaudio.so.2", "libportaudio.so"):
+            cand = os.path.join(libdir, n)
+            if os.path.exists(cand):
+                pa = cand
+                break
+        if pa is None:
+            return
     # load jack first (dependency of portaudio); glibc resolves DT_NEEDED
     # against already-loaded objects with RTLD_GLOBAL
+    libdir = os.path.dirname(pa)
     for name in ("libjack.so.0", "libportaudio.so.2"):
         cand = os.path.join(libdir, name)
         if os.path.exists(cand):
@@ -37,7 +68,7 @@ def preload_portaudio() -> None:
             except OSError:
                 pass
     # sounddevice probes via ctypes.util.find_library before dlopen; make the
-    # bundled copy discoverable (must happen before `import sounddevice`)
+    # chosen copy discoverable (must happen before `import sounddevice`)
     import ctypes.util as _cu
     if _cu.find_library("portaudio") is None:
         _orig = _cu.find_library
