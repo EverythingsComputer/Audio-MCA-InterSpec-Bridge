@@ -70,8 +70,27 @@ gsbridge-gui
    gsbridge. With "Push each autosave…" checked (default) every save repaints
    the running InterSpec window in place — that's your live view. Pick the
    Foreground / Background / Secondary lane from the dropdown; no prompts ever.
-3. To keep a frozen sample for analysis: stop acquisition and open
+3. **Pause / Resume** anytime: Pause freezes counting (clocks stop, no pushes)
+   so you can calibrate or inspect in InterSpec without the display changing;
+   Resume continues accumulating into the same spectrum. Nothing resets.
+4. To keep a frozen sample for analysis: stop acquisition and open
    `gsbridge_final.spe` (written once on exit, never pushed over).
+
+### Energy calibration
+
+The "no energy calibration" notice in InterSpec is expected until you calibrate.
+Important: each MCP push replaces the foreground spectrum with the file's own
+calibration, so a calibration fitted *inside InterSpec* will not survive the
+next autosave. gsbridge therefore embeds your coefficients into every file it
+writes — once set, pushes carry the calibration and nothing resets:
+
+1. Press **Pause** in gsbridge (spectrum freezes, InterSpec stops updating).
+2. In InterSpec: Energy Calibration tool → fit peaks → copy the polynomial
+   coefficients (keV).
+3. gsbridge Settings → *Energy cal (keV)* → paste as `c0,c1[,c2,c3]` (works
+   while paused — takes effect on Resume's next autosave).
+4. **Resume.** Pushes now carry the calibration; the warning is gone and every
+   future run can reuse it (also via CLI: `--energy-cal -1.5,0.734`).
 
 Headless / scripted:
 

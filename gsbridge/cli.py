@@ -62,6 +62,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--lane", choices=("Foreground", "Background", "Secondary"),
                    default="Foreground", help="which InterSpec slot to load into "
                    "(MCP mode only)")
+    p.add_argument("--energy-cal", metavar="C0,C1[,C2,C3]", default=None,
+                   help="embed keV energy calibration polynomial in saved/pushed "
+                        "spectra (e.g. '-1.5,0.734' = linear); InterSpec then "
+                        "shows energies without the no-calibration warning")
     return p
 
 
@@ -98,9 +102,11 @@ def main(argv=None) -> int:
 
     import os
     push_cmd = args.push.split() if args.push else ["interspec"]
+    ecal = ([float(x) for x in args.energy_cal.split(",")]
+            if args.energy_cal else None)
     engine = Engine(factory, cfg, outdir := os.path.expanduser(args.outdir),
                     save_formats=fmts, autosave_s=args.autosave, push_cmd=push_cmd,
-                    push_mode=args.push_mode, lane=args.lane)
+                    push_mode=args.push_mode, lane=args.lane, energy_cal=ecal)
     engine.sample_rate = args.rate
 
     try:

@@ -27,7 +27,7 @@ from .writers import HAVE_SPECUTILS
 
 class SettingsDialog(QDialog):
     def __init__(self, cfg: ProcessorConfig, device_text: str = "codec",
-                 sample_rate: float = 48000.0, parent=None):
+                 sample_rate: float = 48000.0, cal_text: str = "", parent=None):
         super().__init__(parent)
         self.setWindowTitle("Acquisition settings")
         self.cfg = cfg
@@ -62,6 +62,16 @@ class SettingsDialog(QDialog):
         self.pol_combo.setCurrentIndex(0 if cfg.polarity > 0 else 1)
         form.addRow("Pulse polarity:", self.pol_combo)
 
+        self.cal_edit = QLineEdit(cal_text or "")
+        self.cal_edit.setPlaceholderText("e.g. -1.5,0.734   (c0,c1[,c2,c3] in keV)")
+        self.cal_edit.setToolTip(
+            "Optional energy calibration polynomial embedded in every saved and\n"
+            "pushed spectrum: E(keV) = c0 + c1*ch + c2*ch^2 + c3*ch^3.\n"
+            "Get coefficients from InterSpec's Energy Calibration tool (fit peaks\n"
+            "on a paused or stopped run), paste them here, then resume - the\n"
+            "'no energy calibration' warning disappears and pushes carry it.")
+        form.addRow("Energy cal (keV):", self.cal_edit)
+
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
@@ -88,6 +98,7 @@ class MainWindow(QWidget):
         self.out_dir = None  # set below
         self.engine: Engine | None = None
         self._wav_path: str | None = None
+        self.cal_text: str = ""            # energy cal coeffs (comma string)
 
         layout = QVBoxLayout(self)
 
@@ -109,6 +120,12 @@ class MainWindow(QWidget):
         # ---- controls
         ctrl = QHBoxLayout()
         self.btn_start = QPushButton("Start")
+        self.btn_pause = QPushButton("Pause")
+        self.btn_pause.setEnabled(False)
+        self.btn_pause.setToolTip("Freeze counting (clocks stop, no pushes) so you can\n"
+                                  "calibrate/inspect in InterSpec; press again to resume.\n"
+                                  "The paused spectrum stays loaded and keeps accumulating\n"
+                                  "in InterSpec until resumed - nothing resets.")
         self.btn_stop = QPushButton("Stop")
         self.btn_stop.setEnabled(False)
         self.btn_settings = QPushButton("Settings…")
@@ -123,8 +140,8 @@ class MainWindow(QWidget):
         if not HAVE_SPECUTILS:
             self.chk_save_spc.setEnabled(False)
             self.chk_save_n42.setEnabled(False)
-        for w in (self.btn_start, self.btn_stop, self.btn_settings, self.btn_wav,
-                  self.btn_live, self.btn_open_out):
+        for w in (self.btn_start, self.btn_pause, self.btn_stop, self.btn_settings,
+                  self.btn_wav, self.btn_live, self.btn_open_out):
             ctrl.addWidget(w)
         ctrl.addStretch(1)
         ctrl.addWidget(QLabel("Save:"))
@@ -177,6 +194,7 @@ class MainWindow(QWidget):
         self.out_dir = os.path.expanduser("~/Documents/GS-Bridge-output")
 
         self.btn_start.clicked.connect(self.on_start)
+        self.btn_pause.clicked.connect(self.on_pause)
         self.btn_stop.clicked.connect(self.on_stop)
         self.btn_settings.clicked.connect(self.on_settings)
         self.btn_wav.clicked.connect(self.on_wav)
@@ -200,6 +218,14 @@ class MainWindow(QWidget):
         fmts = self.formats()
         dtxt = self.device_text
         wav_path = self._wav_path          # capture current mode for this run
+        try:
+            ecal = ([float(x) for x in self.cal_text.split(",")]
+                    if self.cal_text.strip() else None)
+        except ValueError:
+            QMessageBox.warning(self, "Energy cal",
+                                "Coefficients must be comma-separated numbers,"
+                                " e.g. -1.5,0.734")
+            return
 
         def factory():
             if wav_path:
@@ -211,7 +237,8 @@ class MainWindow(QWidget):
         self.engine = Engine(factory, self.cfg, self.out_dir, save_formats=fmts,
                              push_cmd=self.push_cmd_edit.text().strip().split()
                              or ["interspec"],
-                             push_mode=mode, lane=self.lane_combo.currentText())
+                             push_mode=mode, lane=self.lane_combo.currentText(),
+                             energy_cal=ecal)
         self.engine.sample_rate = self.sample_rate
         try:
             self.engine.start()
@@ -220,24 +247,51 @@ class MainWindow(QWidget):
             self.engine = None
             return
         self.btn_start.setEnabled(False)
+        self.btn_pause.setEnabled(True)
+        self.btn_pause.setText("Pause")
         self.btn_stop.setEnabled(True)
-        self.btn_settings.setEnabled(False)
+        # settings stay available while running: energy cal applies live (next
+        # autosave); device/threshold changes apply on next Start.
+
+    def on_pause(self):
+        if not self.engine:
+            return
+        if self.engine.paused.is_set():
+            self.engine.resume()
+            self.btn_pause.setText("Pause")
+        else:
+            self.engine.pause()
+            self.btn_pause.setText("Resume")
 
     def on_stop(self):
         if self.engine:
             self.engine.stop()
             self.engine = None
         self.btn_start.setEnabled(True)
+        self.btn_pause.setEnabled(False)
+        self.btn_pause.setText("Pause")
         self.btn_stop.setEnabled(False)
         self.btn_settings.setEnabled(True)
 
     def on_settings(self):
         dlg = SettingsDialog(self.cfg, device_text=self.device_text,
-                             sample_rate=self.sample_rate, parent=self)
+                             sample_rate=self.sample_rate,
+                             cal_text=self.cal_text, parent=self)
         if dlg.exec() == QDialog.Accepted:
             self.cfg = dlg.apply_to_cfg()
             self.device_text = dlg.device_edit.text().strip()
             self.sample_rate = dlg.rate_box.value()
+            self.cal_text = dlg.cal_edit.text().strip()
+            # energy cal can be applied to a live/paused run (e.g. paste coeffs
+            # fitted in InterSpec during a pause; takes effect on next autosave)
+            if self.engine is not None:
+                try:
+                    self.engine.energy_cal = ([float(x) for x in self.cal_text.split(",")]
+                                              if self.cal_text.strip() else None)
+                except ValueError:
+                    QMessageBox.warning(self, "Energy cal",
+                                        "Coefficients must be comma-separated numbers,"
+                                        " e.g. -1.5,0.734")
 
     def on_wav(self):
         path, _ = QFileDialog.getOpenFileName(self, "Open WAV (16-bit PCM)", "",
@@ -270,6 +324,8 @@ class MainWindow(QWidget):
         live_frac = (stats.get("live_time", 0.0) / max(stats.get("real_time", 1e-9), 1e-9)) * 100
         err = f"  ERROR: {self.engine.last_error}" if self.engine.last_error else ""
         src = "WAV" if self._wav_path else "live"
+        if self.engine.paused.is_set():
+            src += " PAUSED"
         self.stats_label.setText(
             f"{src} | real {stats.get('real_time',0):.1f}s  live {live_frac:.1f}%  "
             f"input {cps:.0f} cps  pileup rej {stats.get('rejected_pileup',0)}  "

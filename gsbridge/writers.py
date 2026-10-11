@@ -26,8 +26,15 @@ except ImportError:  # pragma: no cover
 
 def write_spe_ascii(path: str, counts: np.ndarray, live_time: float, real_time: float,
                     title: str = "GS-Bridge live", start_time: datetime.datetime | None = None,
-                    detector: str = "GS-PRO-V5", uuid: str | None = None) -> None:
-    """Ortec-style SpEC ASCII (.spe) - the most universally accepted format."""
+                    detector: str = "GS-PRO-V5", uuid: str | None = None,
+                    energy_cal=None) -> None:
+    """Ortec-style SpEC ASCII (.spe) - the most universally accepted format.
+
+    energy_cal: optional [c0, c1(, c2, c3)] keV polynomial coefficients. NOTE
+    the SpecUtils ASCII parser ignores hand-rolled McaCalib/$ENER_FIT lines
+    (verified), so when a calibration is requested callers should prefer
+    write_via_specutils(); this writer embeds it best-effort anyway.
+    """
     st = (start_time or datetime.datetime.now()).replace(microsecond=0)
     n = len(counts)
     lines = [
@@ -46,9 +53,9 @@ def write_spe_ascii(path: str, counts: np.ndarray, live_time: float, real_time: 
         f"DataMode              : MCA",
         f"Analyzer              : {detector}",
         "FirstChannel          : 1",
-        "McaCalib0             : 0.0",
-        "McaCalib1             : 1.0",
-        "McaCalib2             : 0.0",
+        f"McaCalib0             : {(energy_cal or [0.0])[0] if energy_cal else 0.0}",
+        f"McaCalib1             : {(list(energy_cal) + [0.0, 0.0, 0.0])[1] if energy_cal else 1.0}",
+        f"McaCalib2             : {(list(energy_cal) + [0.0, 0.0, 0.0])[2] if energy_cal else 0.0}",
     ]
     if uuid:
         lines.append(f"UUID                  : {uuid}")
@@ -71,8 +78,13 @@ def write_via_specutils(path: str, counts: np.ndarray, live_time: float, real_ti
                         detector: str = "GS-PRO-V5",
                         manufacturer: str = "Bee Research",
                         model: str = "GS-PRO-V5",
-                        uuid: str | None = None) -> None:
-    """Write using Sandia SpecUtils bindings (fmt: 'spc', 'n42', 'pcf', 'spe')."""
+                        uuid: str | None = None,
+                        energy_cal=None) -> None:
+    """Write using Sandia SpecUtils bindings (fmt: 'spc', 'n42', 'pcf', 'spe').
+
+    energy_cal: optional [c0, c1(, c2, c3)] keV polynomial coefficients;
+    embedded via setEnergyCalibration (round-trips through .spc/.n42 - the
+    ASCII parser drops hand-written cal lines, verified)."""
     if not HAVE_SPECUTILS:
         raise RuntimeError("SpecUtils python bindings not installed")
     st = (start_time or datetime.datetime.now()).replace(microsecond=0)
@@ -83,6 +95,9 @@ def write_via_specutils(path: str, counts: np.ndarray, live_time: float, real_ti
     m.setStartTime(st)
     m.setGammaCounts([int(c) for c in counts], float(live_time), float(real_time))
     m.setDetectorName(detector)
+    if energy_cal:
+        m.setEnergyCalibration(_su.EnergyCalibration.fromPolynomial(
+            len(counts), [float(c) for c in energy_cal]))
 
     sf = _su.SpecFile()
     sf.addMeasurement(m, True)
@@ -131,9 +146,15 @@ def _atomic_write_text(path: str, text: str) -> None:
 
 
 def write_spectrum(path: str, counts: np.ndarray, live_time: float, real_time: float, **kw) -> None:
-    """Best-effort writer chosen by extension (.spe/.spc/.n42/.pcf)."""
+    """Best-effort writer chosen by extension (.spe/.spc/.n42/.pcf).
+
+    With energy_cal set, .spe also routes through SpecUtils (SpcAscii) so the
+    calibration survives parsing; falls back to the hand-rolled writer when
+    bindings are missing."""
     ext = os.path.splitext(path)[1].lower().lstrip(".")
     if ext in ("spc", "n42", "pcf") and HAVE_SPECUTILS:
         write_via_specutils(path, counts, live_time, real_time, fmt=ext, **kw)
+    elif ext == "spe" and kw.get("energy_cal") and HAVE_SPECUTILS:
+        write_via_specutils(path, counts, live_time, real_time, fmt="spe", **kw)
     else:
         write_spe_ascii(path, counts, live_time, real_time, **kw)

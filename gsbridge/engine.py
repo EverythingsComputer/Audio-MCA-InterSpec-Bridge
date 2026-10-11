@@ -23,7 +23,8 @@ class Engine:
     def __init__(self, source_factory, cfg: ProcessorConfig, out_dir: str,
                  save_formats=("spe",), autosave_s: float = 5.0,
                  push_cmd: list[str] | None = None,
-                 push_mode: str = "mcp", lane: str = "Foreground"):
+                 push_mode: str = "mcp", lane: str = "Foreground",
+                 energy_cal=None):
         """source_factory() -> object with run(callback) and stop().
 
         push_mode selects how each autosave reaches a running InterSpec:
@@ -53,6 +54,7 @@ class Engine:
         self.last_save_at: float | None = None
 
         self._lock = threading.Lock()
+        self.paused = threading.Event()   # set => drop input, freeze clocks, no push
         self._save_thread: threading.Thread | None = None
         self._stop_saving = threading.Event()
         self.push_cmd = push_cmd
@@ -63,6 +65,11 @@ class Engine:
         self._mcp = None
         self._mcp_dead_logged = False
         self.push_count = 0
+        # optional keV polynomial [c0, c1(, c2, c3)] embedded in saved spectra.
+        # note: SpecUtils' ASCII .spe parser drops hand-written cal lines, so
+        # when set we route saves-with-cal through SpecUtils (.n42/.spc) and
+        # prefer those formats for the MCP push file.
+        self.energy_cal = list(energy_cal) if energy_cal else None
         # Stable identity for live saves: InterSpec treats a pushed file whose
         # UUID matches the already-loaded measurement as an update of the same
         # spectrum (loads straight to Foreground, no foreground/background/
@@ -82,7 +89,7 @@ class Engine:
 
         def on_block(block: np.ndarray) -> None:
             sr = self.sample_rate or 48000.0
-            if self.processor is None:
+            if self.processor is None or self.paused.is_set():
                 return
             with self._lock:
                 self.processor.feed(block)
@@ -118,6 +125,16 @@ class Engine:
         except Exception:
             pass
 
+    def pause(self) -> None:
+        """Freeze acquisition: input is dropped, clocks stop, no autosave push.
+
+        The source stream keeps running (no device restart); the spectrum and
+        timers hold their current values until resume()."""
+        self.paused.set()
+
+    def resume(self) -> None:
+        self.paused.clear()
+
     # ------------------------------------------------------------------ save
     def snapshot(self) -> tuple[np.ndarray, dict, float]:
         """(spectrum copy, stats dict, live_time_fraction)."""
@@ -139,7 +156,7 @@ class Engine:
             path = os.path.join(self.out_dir, name)
             write_spectrum(path, spec, stats.get("live_time", 0.0),
                            stats.get("real_time", 0.0), title=f"GS-Bridge {tag}",
-                           start_time=st_time, uuid=uid)
+                           start_time=st_time, uuid=uid, energy_cal=self.energy_cal)
             written.append(path)
         # machine-readable sidecar for other tools (option-C bridge)
         with open(os.path.join(self.out_dir, "gsbridge_status.json"), "w") as f:
@@ -162,7 +179,10 @@ class Engine:
             return
         # UUID pinning (which suppresses InterSpec's open-as prompt) works
         # for .spe and .n42; binary .spc has no header field for a UUID.
-        primary = next((p for p in paths if p.endswith((".spe", ".n42"))), None)
+        # With an energy calibration embedded, prefer .n42: the ASCII parser
+        # drops hand-written cal lines, SpecUtils' N42 round-trips it.
+        order = (".n42", ".spe") if self.energy_cal else (".spe", ".n42")
+        primary = next((p for ext in order for p in paths if p.endswith(ext)), None)
         if primary is None:
             self.last_error = ("push skipped: save .spe or .n42 "
                                "(UUID pinning needs a header field)")
@@ -211,6 +231,8 @@ class Engine:
 
     def _saver_loop(self) -> None:
         while not self._stop_saving.wait(self.autosave_s):
+            if self.paused.is_set():
+                continue          # frozen: no new files, no pushes while paused
             try:
                 self.save_now(tag="live")
             except Exception as e:
