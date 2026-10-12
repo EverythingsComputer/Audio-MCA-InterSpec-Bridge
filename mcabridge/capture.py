@@ -33,12 +33,12 @@ def preload_portaudio() -> None:
     bundled = None
     if meipass:
         for n in ("libportaudio.so.2", "libportaudio.so"):
-            cand = os.path.join(meipass, "gsbridge_libs", n)
+            cand = os.path.join(meipass, "mcabridge_libs", n)
             if os.path.exists(cand):
                 bundled = cand
                 break
         if bundled is None:
-            cand = os.path.join(meipass, "gsbridge_libs", "portaudio.dll")
+            cand = os.path.join(meipass, "mcabridge_libs", "portaudio.dll")
             if os.path.exists(cand):
                 bundled = cand
     if meipass is not None and bundled is not None:

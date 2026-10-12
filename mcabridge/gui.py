@@ -1,4 +1,4 @@
-"""PySide6 GUI for gsbridge.
+"""PySide6 GUI for mcabridge.
 
 Layout: live spectrum plot (pyqtgraph), run controls, device/threshold
 settings, stats readout, and an output panel telling you exactly which files
@@ -89,7 +89,7 @@ class SettingsDialog(QDialog):
 class MainWindow(QWidget):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("GS-Bridge — audio-MCA → InterSpec")
+        self.setWindowTitle("Audio MCA → InterSpec Bridge")
         self.resize(980, 640)
 
         self.cfg = ProcessorConfig()
@@ -200,7 +200,7 @@ older InterSpec builds without MCP.""")
 
         # default output dir next to home
         import os
-        self.out_dir = os.path.expanduser("~/Documents/GS-Bridge-output")
+        self.out_dir = os.path.expanduser("~/Documents/mca-bridge-output")
 
         self.btn_start.clicked.connect(self.on_start)
         self.btn_pause.clicked.connect(self.on_pause)
@@ -308,12 +308,12 @@ older InterSpec builds without MCP.""")
         if path:
             self._wav_path = path
             self.btn_live.setEnabled(True)
-            self.setWindowTitle(f"GS-Bridge — replaying {path}")
+            self.setWindowTitle(f"Audio MCA Bridge — replaying {path}")
 
     def on_back_to_live(self):
         self._wav_path = None
         self.btn_live.setEnabled(False)
-        self.setWindowTitle("GS-Bridge — audio-MCA → InterSpec")
+        self.setWindowTitle("Audio MCA → InterSpec Bridge")
 
     def on_open_out(self):
         import os, subprocess, platform

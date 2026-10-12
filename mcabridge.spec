@@ -1,13 +1,13 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""PyInstaller spec for gsbridge.
+"""PyInstaller spec for mcabridge.
 
-ONE executable, `gsbridge`: run it with no arguments to open the GUI; pass
+ONE executable, `mcabridge`: run it with no arguments to open the GUI; pass
 CLI flags (--list, --wav ..., --seconds ...) for headless operation. A single
 entry point avoids PyInstaller's multi-EXE onedir pitfalls (both executables
 must share identical binaries/datas).
 
 Build (from the repo root, in an env with all deps installed):
-    pyinstaller --noconfirm gsbridge.spec
+    pyinstaller --noconfirm mcabridge.spec
 
 The runtime hook (hooks/rthook_portaudio.py) preloads bundled PortAudio before
 sounddevice is imported anywhere.
@@ -23,14 +23,14 @@ def _hiddenimports():
         "sounddevice",
         "_sounddevice_data",
         "SpecUtils",
-        "gsbridge",
-        "gsbridge.cli",
-        "gsbridge.gui",
-        "gsbridge.capture",
-        "gsbridge.dsp",
-        "gsbridge.engine",
-        "gsbridge.mcp",
-        "gsbridge.writers",
+        "mcabridge",
+        "mcabridge.cli",
+        "mcabridge.gui",
+        "mcabridge.capture",
+        "mcabridge.dsp",
+        "mcabridge.engine",
+        "mcabridge.mcp",
+        "mcabridge.writers",
     ]
     # GUI deps are optional at runtime; include only if installed so the spec
     # also works in a minimal (CLI-only) build environment.
@@ -59,7 +59,7 @@ pyz = PYZ(a.pure)
 # the shared _internal dependency tree (fast startup, easy to inspect/patch).
 exe = EXE(
     pyz, a.scripts,
-    name="gsbridge",
+    name="mcabridge",
     debug=False, strip=False, upx=False,
     # console=True: the CLI needs stdout/stderr; the GUI opens its own window
     # on top (a console window also appears on Windows - acceptable trade-off
@@ -69,6 +69,6 @@ exe = EXE(
 
 coll = COLLECT(
     exe, a.binaries, a.datas,
-    # distinct from the EXE basename ("gsbridge") to avoid a path collision
-    name="gsbridge-app",
+    # distinct from the EXE basename ("mcabridge") to avoid a path collision
+    name="mcabridge-app",
 )

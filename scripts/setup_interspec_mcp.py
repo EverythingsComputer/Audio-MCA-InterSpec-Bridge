@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
-"""One-shot InterSpec MCP setup for gsbridge (config only — no InterSpec code
+"""One-shot InterSpec MCP setup for mcabridge (config only — no InterSpec code
 changes).
 
 Enables InterSpec's built-in MCP API by placing an llm_config.xml override in
 InterSpec's per-user data directory, and stores the matching bearer token for
-gsbridge. Safe to re-run; existing files are backed up next time you run it.
+mcabridge. Safe to re-run; existing files are backed up next time you run it.
 
 Usage:
     python scripts/setup_interspec_mcp.py [--token YOURTOKEN] [--print-only]
 
 Or skip this script entirely in InterSpec's GUI:
     Tools -> LLM Assistant -> (gear/settings) -> check "MCP Server", set a
-    bearer token, save. Then just create ~/.config/gsbridge/mcp.json with
+    bearer token, save. Then just create ~/.config/mcabridge/mcp.json with
     {"bearer_token": "<same token>"}.
 """
 
@@ -55,7 +55,7 @@ def enable_mcp(xml_text: str, token: str) -> str:
     mcp = root.find("McpServer")
     if mcp is None:
         raise SystemExit("This llm_config.xml has no <McpServer> section - your "
-                         "InterSpec build predates the MCP API; use gsbridge "
+                         "InterSpec build predates the MCP API; use mcabridge "
                          "--push-mode launch instead.")
     en = mcp.find("Enabled")
     if en is None:
@@ -95,13 +95,13 @@ def main() -> int:
 
     updated = enable_mcp(base, args.token)
 
-    gsbridge_cfg = (Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config")))
-                    if os.name != "nt" else Path(os.environ["APPDATA"])) / "gsbridge" / "mcp.json"
+    mcabridge_cfg = (Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config")))
+                    if os.name != "nt" else Path(os.environ["APPDATA"])) / "mcabridge" / "mcp.json"
 
     print(f"InterSpec user dir : {user_dir}")
     print(f"source             : {source_note}")
     print(f"will write         : {target}")
-    print(f"                   : {gsbridge_cfg}")
+    print(f"                   : {mcabridge_cfg}")
     print(f"bearer token       : {args.token}")
     if args.print_only:
         return 0
@@ -111,13 +111,13 @@ def main() -> int:
         shutil.copy2(target, target.with_suffix(".xml.bak"))
     target.write_text(updated)
 
-    gsbridge_cfg.parent.mkdir(parents=True, exist_ok=True)
-    if gsbridge_cfg.exists():
-        shutil.copy2(gsbridge_cfg, gsbridge_cfg.with_suffix(".json.bak"))
-    gsbridge_cfg.write_text(json.dumps({"bearer_token": args.token}, indent=2) + "\n")
+    mcabridge_cfg.parent.mkdir(parents=True, exist_ok=True)
+    if mcabridge_cfg.exists():
+        shutil.copy2(mcabridge_cfg, mcabridge_cfg.with_suffix(".json.bak"))
+    mcabridge_cfg.write_text(json.dumps({"bearer_token": args.token}, indent=2) + "\n")
 
     print("\nDone. Restart InterSpec (or re-save its settings via Tools -> LLM "
-          "Assistant), then run:\n    gsbridge --check")
+          "Assistant), then run:\n    mcabridge --check")
     return 0
 
 

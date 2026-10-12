@@ -1,12 +1,12 @@
-"""PyInstaller runtime hook for gsbridge.
+"""PyInstaller runtime hook for mcabridge.
 
-Runs before either entry point (gsbridge / gsbridge-gui). Preloads a bundled
+Runs before either entry point (mcabridge / mcabridge-gui). Preloads a bundled
 PortAudio if the system has none, so sounddevice works on machines without
 libportaudio2 installed. On Windows/macOS the sounddevice wheel already ships
 PortAudio, so this is effectively a no-op there.
 """
 try:
-    from gsbridge.capture import preload_portaudio
+    from mcabridge.capture import preload_portaudio
 
     preload_portaudio()
 except Exception:

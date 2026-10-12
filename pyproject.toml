@@ -3,13 +3,13 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "gsbridge"
+name = "mcabridge"
 version = "0.2.0"
 description = "Live gamma-spectroscopy bridge: USB audio-card MCAs (Gammaspectacular GS-PRO-V5 etc.) to InterSpec and friends"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
-authors = [{ name = "gsbridge contributors" }]
+authors = [{ name = "mcabridge contributors" }]
 dependencies = [
     "numpy>=1.24",
     "sounddevice>=0.4.6",
@@ -20,8 +20,8 @@ gui = ["PySide6>=6.5", "pyqtgraph>=0.13"]
 specutils = ["sandiaspecutils>=0.0.11"]   # Sandia SpecUtils bindings: .spc/.n42/.pcf output
 
 [project.scripts]
-gsbridge = "gsbridge.cli:main"
-gsbridge-gui = "gsbridge.gui:main"
+mcabridge = "mcabridge.cli:main"
+mcabridge-gui = "mcabridge.gui:main"
 
 [tool.setuptools.packages.find]
-include = ["gsbridge*"]
+include = ["mcabridge*"]

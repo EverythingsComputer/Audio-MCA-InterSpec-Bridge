@@ -1,4 +1,4 @@
-# Build gsbridge bundles for Windows / macOS (arm64 + x86_64) / Linux and
+# Build mcabridge bundles for Windows / macOS (arm64 + x86_64) / Linux and
 # attach them to a GitHub Release.
 #
 # Triggers: pushing a tag like v0.2.0, or manually from the Actions tab
@@ -72,18 +72,18 @@ jobs:
         shell: pwsh
         run: |
           # build_release.sh is bash; replicate its Windows branch in pwsh.
-          python -m PyInstaller --noconfirm gsbridge.spec
-          $ver = python -c "import gsbridge; print(gsbridge.__version__)"
-          $dist = "dist/gsbridge-$ver"
+          python -m PyInstaller --noconfirm mcabridge.spec
+          $ver = python -c "import mcabridge; print(mcabridge.__version__)"
+          $dist = "dist/mcabridge-$ver"
           if (Test-Path $dist) { Remove-Item -Recurse -Force $dist }
-          Copy-Item -Recurse dist/gsbridge-app $dist
+          Copy-Item -Recurse dist/mcabridge-app $dist
           Copy-Item README.md LICENSE $dist
-          Compress-Archive -Path $dist -DestinationPath "dist/gsbridge-win64.zip"
+          Compress-Archive -Path $dist -DestinationPath "dist/mcabridge-win64.zip"
           Get-ChildItem dist
 
       - uses: actions/upload-artifact@v4
         with:
-          name: gsbridge-${{ matrix.label }}
+          name: mcabridge-${{ matrix.label }}
           path: |
             dist/*.tar.gz
             dist/*.zip
@@ -96,7 +96,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          pattern: gsbridge-*
+          pattern: mcabridge-*
           merge-multiple: true
           path: assets
 
@@ -106,21 +106,21 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           files: |
-            assets/gsbridge-linux-x86_64.tar.gz
-            assets/gsbridge-macos-arm64.app.tar.gz
-            assets/gsbridge-macos-x86_64.app.tar.gz
-            assets/gsbridge-win64.zip
+            assets/mcabridge-linux-x86_64.tar.gz
+            assets/mcabridge-macos-arm64.app.tar.gz
+            assets/mcabridge-macos-x86_64.app.tar.gz
+            assets/mcabridge-win64.zip
           generate_release_notes: true
           body: |
-            Prebuilt gsbridge bundles. Each archive contains a single
-            `gsbridge` executable: run with **no arguments** to open the GUI,
+            Prebuilt mcabridge bundles. Each archive contains a single
+            `mcabridge` executable: run with **no arguments** to open the GUI,
             or pass flags for headless CLI use (`--list`, `--wav FILE`, …).
 
-            - **Windows**: unzip, run `gsbridge\gsbridge.exe`.
-            - **macOS**: unpack, drag `gsbridge.app` to Applications. It is
+            - **Windows**: unzip, run `mcabridge\mcabridge.exe`.
+            - **macOS**: unpack, drag `mcabridge.app` to Applications. It is
               ad-hoc signed (not notarized): first launch via right-click →
-              Open, or `xattr -dr com.apple.quarantine gsbridge.app`.
-            - **Linux**: unpack, run `./gsbridge-*/gsbridge`
+              Open, or `xattr -dr com.apple.quarantine mcabridge.app`.
+            - **Linux**: unpack, run `./mcabridge-*/mcabridge`
               (PortAudio + libjack are bundled; no system packages needed).
 
             Requires InterSpec 1.0.x with the MCP API enabled for live push —

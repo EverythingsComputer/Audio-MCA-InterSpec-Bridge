@@ -13,4 +13,4 @@ done
 cd .local/lib
 [ -e libportaudio.so.2 ] && ln -sf libportaudio.so.2.0.0 libportaudio.so || true
 echo "bundled:"; ls -la
-echo "gsbridge auto-loads this directory at startup (no LD_LIBRARY_PATH needed)."
+echo "mcabridge auto-loads this directory at startup (no LD_LIBRARY_PATH needed)."

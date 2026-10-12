@@ -32,8 +32,8 @@ class Engine:
                   (load_spectrum_file). Updates the visible window in place,
                   no prompts, honors `lane` ("Foreground"/"Background"/
                   "Secondary"). Requires MCP enabled in InterSpec's user
-                  llm_config.xml + token in ~/.config/gsbridge/mcp.json or
-                  GSBRIDGE_MCP_TOKEN — see gsbridge/mcp.py. Falls back to the
+                  llm_config.xml + token in ~/.config/mcabridge/mcp.json or
+                  MCABRIDGE_MCP_TOKEN — see mcabridge/mcp.py. Falls back to the
                   "launch" path automatically if InterSpec has no MCP server.
           "launch": run push_cmd + [file] (e.g. ["interspec"]); relies on the
                   desktop shell's single-instance file forwarding.
@@ -152,14 +152,14 @@ class Engine:
         # pushes of this session as the same measurement (no open-as prompt)
         uid = self.session_uuid if tag == "live" else None
         for fmt in self.save_formats:
-            name = f"gsbridge_{tag}.{fmt}" if tag != "live" else f"gsbridge_live.{fmt}"
+            name = f"mcabridge_{tag}.{fmt}" if tag != "live" else f"mcabridge_live.{fmt}"
             path = os.path.join(self.out_dir, name)
             write_spectrum(path, spec, stats.get("live_time", 0.0),
-                           stats.get("real_time", 0.0), title=f"GS-Bridge {tag}",
+                           stats.get("real_time", 0.0), title=f"Audio MCA Bridge {tag}",
                            start_time=st_time, uuid=uid, energy_cal=self.energy_cal)
             written.append(path)
         # machine-readable sidecar for other tools (option-C bridge)
-        with open(os.path.join(self.out_dir, "gsbridge_status.json"), "w") as f:
+        with open(os.path.join(self.out_dir, "mcabridge_status.json"), "w") as f:
             json.dump({"time": st_time.isoformat(), **stats,
                        "counts_total": int(spec.sum())}, f, indent=1)
         self.last_save_at = time.monotonic()
@@ -193,7 +193,7 @@ class Engine:
                 if self._mcp is None:
                     from .mcp import McpPusher
                     self._mcp = McpPusher()
-                # Pass sampleNumbers explicitly. gsbridge writes a single
+                # Pass sampleNumbers explicitly. mcabridge writes a single
                 # measurement as sample 1 (writers.py setSampleNumber(1)). If
                 # omitted, InterSpec's displayed-sample set stays empty for a
                 # freshly parsed file and its "no energy calibration for the

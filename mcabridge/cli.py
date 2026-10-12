@@ -1,17 +1,17 @@
-"""Command-line interface for gsbridge.
+"""Command-line interface for mcabridge.
 
 Examples
 --------
   # list capture devices
-  python -m gsbridge --list
+  python -m mcabridge --list
 
   # record from the GS-PRO-V5 for 60 s, writing .spe + .spc every 5 s
-  python -m gsbridge --seconds 60 --formats spe,spc
+  python -m mcabridge --seconds 60 --formats spe,spc
 
   # replay a WAV captured with any recorder (validation / demo)
-  python -m gsbridge --wav test.wav --formats spe,n42
+  python -m mcabridge --wav test.wav --formats spe,n42
 
-Then open gsbridge_live.spe in InterSpec (re-open it any time for the latest data).
+Then open mcabridge_live.spe in InterSpec (re-open it any time for the latest data).
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ from .writers import HAVE_SPECUTILS
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        prog="gsbridge",
+        prog="mcabridge",
         description="Audio-card MCA (Gammaspectacular GS-PRO-V5 etc.) to "
                     "InterSpec live-file bridge.")
     p.add_argument("--list", action="store_true", help="list input devices and exit")
@@ -40,7 +40,7 @@ def build_parser() -> argparse.ArgumentParser:
                    help="stop after N seconds (0 = run until Ctrl-C)")
     p.add_argument("--wav", metavar="FILE", help="replay a 16-bit PCM WAV instead of live capture")
     p.add_argument("--channel", type=int, default=0, help="input channel (GS = left = 0)")
-    p.add_argument("--outdir", default="~/Documents/GS-Bridge-output",
+    p.add_argument("--outdir", default="~/Documents/mca-bridge-output",
                    help="output directory for spectrum files")
     p.add_argument("--formats", default="spe",
                    help="comma list of spe,spc,n42,pcf (spc/n42/pcf need SpecUtils bindings"
@@ -153,7 +153,7 @@ def main(argv=None) -> int:
 
     src_desc = f"WAV {wav}" if wav else f"device '{args.device}' @ {args.rate:.0f} Hz"
     print(f"acquiring from {src_desc}; writing {', '.join(fmts)} to {outdir}")
-    print("open gsbridge_live.spe in InterSpec; re-open it any time for the latest data.")
+    print("open mcabridge_live.spe in InterSpec; re-open it any time for the latest data.")
 
     stop = {"want": False}
 

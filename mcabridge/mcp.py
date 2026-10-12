@@ -17,16 +17,16 @@ data directory (``~/.config/InterSpec`` on Linux), then inside the
       <BearerToken>my-local-token</BearerToken>
     </McpServer>
 
-Restart InterSpec. gsbridge auto-discovers the port from the listening socket
+Restart InterSpec. mcabridge auto-discovers the port from the listening socket
 of the running ``interspec`` process (no fixed-port config needed -- note that
 pinning HttpPortToServeOn via InterSpec_app_settings.json breaks startup on
 some builds, so we do not recommend it).
 
-The token is read from ``~/.config/gsbridge/mcp.json``::
+The token is read from ``~/.config/mcabridge/mcp.json``::
 
     {"bearer_token": "my-local-token"}
 
-or the environment variable ``GSBRIDGE_MCP_TOKEN``.
+or the environment variable ``MCABRIDGE_MCP_TOKEN``.
 
 Only Python stdlib is used (urllib + json), so this adds no dependencies.
 """
@@ -52,7 +52,7 @@ def discover_port() -> int | None:
 
     The port is ephemeral (InterSpec picks a free one at startup), so this is
     re-run lazily on every new push session; an explicit ``port`` in
-    ~/.config/gsbridge/mcp.json (or GSBRIDGE_MCP_PORT) always wins.
+    ~/.config/mcabridge/mcp.json (or MCABRIDGE_MCP_PORT) always wins.
     """
     import platform
     system = platform.system()
@@ -184,7 +184,7 @@ class McpPusher:
         self.user_session = user_session
         self.timeout = timeout
         # explicit port wins over auto-discovery (config "port" or
-        # GSBRIDGE_MCP_PORT); otherwise discovered per session
+        # MCABRIDGE_MCP_PORT); otherwise discovered per session
         self.fixed_port = port if port is not None else _read_port()
         self.port: int | None = None
         self._session_ready = False
@@ -212,7 +212,7 @@ class McpPusher:
             raise ConnectionError("interspec not running (no listening socket found)")
         reply = self._rpc("initialize", {
             "protocolVersion": "2024-11-05", "capabilities": {},
-            "clientInfo": {"name": "gsbridge", "version": "0.2"}})
+            "clientInfo": {"name": "mcabridge", "version": "0.2"}})
         if "error" in reply:
             raise ConnectionError(f"MCP initialize failed: {reply['error']}")
         self._session_ready = True
@@ -259,34 +259,51 @@ class McpPusher:
         return result
 
 
-def _config_dir() -> str:
-    """gsbridge's per-user config dir (platform-appropriate)."""
+def _config_dir(name: str = "mcabridge") -> str:
+    """Per-user config dir (platform-appropriate)."""
     if os.name == "nt":
         return os.path.join(os.environ.get("APPDATA",
-                                           os.path.expanduser("~")), "gsbridge")
+                                           os.path.expanduser("~")), name)
     xdg = os.environ.get("XDG_CONFIG_HOME")
-    return os.path.join(xdg or os.path.expanduser("~/.config"), "gsbridge")
+    return os.path.join(xdg or os.path.expanduser("~/.config"), name)
 
 
-def _mcp_config() -> dict:
+def _load_json(path: str) -> dict:
     try:
-        with open(os.path.join(_config_dir(), "mcp.json")) as fh:
+        with open(path) as fh:
             data = json.load(fh)
             return data if isinstance(data, dict) else {}
     except (OSError, ValueError):
         return {}
 
 
+def _mcp_config() -> dict:
+    """mcabridge's mcp.json; falls back to the pre-rename gsbridge location."""
+    cfg = _load_json(os.path.join(_config_dir(), "mcp.json"))
+    if not cfg:
+        legacy = _load_json(os.path.join(_config_dir("gsbridge"), "mcp.json"))
+        if legacy:
+            cfg = legacy
+    return cfg
+
+
+def _env(*names: str) -> str | None:
+    """First set env var among names (new name first, GSBRIDGE_* legacy)."""
+    for n in names:
+        v = os.environ.get(n)
+        if v:
+            return v
+    return None
+
+
 def _read_token() -> str:
-    env = os.environ.get("GSBRIDGE_MCP_TOKEN")
-    if env:
-        return env
-    return _mcp_config().get("bearer_token", "") or ""
+    return (_env("MCABRIDGE_MCP_TOKEN", "GSBRIDGE_MCP_TOKEN")
+            or _mcp_config().get("bearer_token", "") or "")
 
 
 def _read_port() -> int | None:
     """Optional explicit port override (env first, then mcp.json "port")."""
-    env = os.environ.get("GSBRIDGE_MCP_PORT")
+    env = _env("MCABRIDGE_MCP_PORT", "GSBRIDGE_MCP_PORT")
     if env:
         try:
             return int(env)

@@ -1,4 +1,4 @@
-"""gsbridge - live gamma spectroscopy bridge for USB audio-card MCAs.
+"""mcabridge - live gamma spectroscopy bridge for USB audio-card MCAs.
 
 Turns any pulse-digitising audio MCA (e.g. Gammaspectacular GS-PRO-V5,
 GS-USB-PRO) into standard spectrum files (.spe / .spc / .n42) that can be
