@@ -16,6 +16,8 @@ cd "$(dirname "$0")/.."
 
 PY="${PY:-python3}"
 if [ -x .venv/bin/python ]; then PY=.venv/bin/python; fi
+# git-bash on Windows has no python3 alias; fall back to `python`
+if ! command -v "$PY" >/dev/null 2>&1; then PY=python; fi
 VERSION=$($PY -c "import mcabridge; print(mcabridge.__version__)" 2>/dev/null || echo 0.0.0)
 VERSION="${VERSION_OVERRIDE:-$VERSION}"
 
@@ -80,7 +82,19 @@ MINGW*|MSYS*|CYGWIN*)
     cp -a .local/lib/*.dll .local/lib/*.bin "$DIST/_internal/mcabridge_libs/" 2>/dev/null || true
   fi
   cp README.md LICENSE "$DIST"/
-  ( cd dist && "$PY" -m zipfile -c "mcabridge-win64.zip" "mcabridge-$VERSION" )
+  # zip with forward-slash entry names (python -m zipfile keeps Windows
+  # backslashes, which some extractors mishandle) and no 260-char path limit
+  # (PowerShell Compress-Archive chokes on PySide6's deep _internal trees).
+  "$PY" - "$DIST" "dist/mcabridge-win64.zip" <<'ZIPHELPER'
+import os, sys, zipfile
+src, out = sys.argv[1], sys.argv[2]
+with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+    for root, _, files in os.walk(src):
+        for f in files:
+            p = os.path.join(root, f)
+            z.write(p, os.path.relpath(p, os.path.dirname(src)).replace(os.sep, "/"))
+print("zipped", out)
+ZIPHELPER
   echo "== wrote dist/mcabridge-win64.zip =="
   ;;
 *)

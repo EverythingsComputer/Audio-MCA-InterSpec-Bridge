@@ -14,15 +14,16 @@ running InterSpec window, which repaints in place. Live counts, pause/resume,
 lane selection, embedded energy calibration — no fork, no patch, no code
 changes to InterSpec (one config toggle, below).
 
-## Quick start
+## Quick start (Linux / macOS)
 
 **Prereqs:** [InterSpec](https://github.com/sandialabs/InterSpec) 1.0.x (a
-build with the MCP API; verified on Linux `.deb` 1.0.14), Python ≥ 3.10, and
-your GS-PRO-V5/GS-USB-PRO plugged in.
+build with the MCP API; verified on Linux `.deb` 1.0.14 and Windows),
+Python ≥ 3.10, and your GS-PRO-V5/GS-USB-PRO plugged in.
 
 ```bash
-# 1. Get mcabridge — either a release bundle (GitHub Releases) or from source:
-git clone https://github.com/<you>/mcabridge && cd mcabridge
+# 1. Get mcabridge — release bundle (GitHub Releases) or from source:
+git clone https://github.com/EverythingsComputer/Audio-MCA-InterSpec-Bridge.git
+cd Audio-MCA-InterSpec-Bridge
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[gui,specutils]"
 #    Linux only, if PortAudio is missing:  sudo apt install libportaudio2
@@ -44,16 +45,68 @@ InterSpec window in place (no prompts). Pause to calibrate/inspect, Resume to
 continue into the same spectrum. Paste your energy-cal coefficients into
 Settings → *Energy cal (keV)* so pushes carry keV (details below).
 
+## Quick start (Windows, PowerShell)
+
+Verified end-to-end on a fresh Windows install. No PortAudio or Visual C++
+setup needed — the Python wheels bundle everything.
+
+**Prereqs:** [Python 3.10+](https://www.python.org/downloads/) (check *Add to
+PATH*), [Git for Windows](https://git-scm.com/download/win) (default options),
+and [InterSpec](https://github.com/sandialabs/InterSpec/releases) — download
+the **Windows x64** build (not the Linux `.deb`), unzip to a permanent folder,
+run `InterSpec.exe`, and confirm **Tools → LLM Assistant** shows an MCP Server
+option. If your InterSpec build lacks that option, get a newer build rather
+than trying to configure a nonexistent feature.
+
+Open PowerShell and run each block in order:
+
+```powershell
+# 1. Check Python + Git are on PATH (py ships with the python.org installer):
+py --version
+git --version
+
+# 2. Clone and install into an isolated venv:
+cd $HOME
+git clone https://github.com/EverythingsComputer/Audio-MCA-InterSpec-Bridge.git
+cd "$HOME\Audio-MCA-InterSpec-Bridge"
+py -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install -e ".[gui,specutils]"
+
+# 3. Generate a token, paste it into InterSpec: Tools → LLM Assistant →
+#    enable MCP Server, set the token, Save. Then CLOSE InterSpec.
+$token = py -c "import secrets; print(secrets.token_hex(32))"
+$token
+
+# 4. With InterSpec closed, configure both sides with the same token:
+.\.venv\Scripts\python.exe .\scripts\setup_interspec_mcp.py --token $token
+
+# 5. Reopen InterSpec (confirm MCP Server is still enabled), then verify:
+.\.venv\Scripts\mcabridge.exe --check
+```
+
+`--check` should report the InterSpec MCP endpoint reachable and the token
+accepted. If it fails, read the error before changing any settings. Then find
+your detector and run:
+
+```powershell
+.\.venv\Scripts\mcabridge.exe --list     # the GS usually appears as "USB Audio Codec"
+.\.venv\Scripts\mcabridge-gui.exe        # Settings → pick the device → Start
+```
+
+Keep the token private — don't paste it into chats or issue reports.
+
 ## Getting the app
 
-- **Prebuilt bundles** (recommended): see [GitHub Releases](../releases). Each
-  release has a bundle for Windows (`mcabridge-win64.zip`), macOS
+- **Prebuilt bundles**: see [GitHub Releases](https://github.com/EverythingsComputer/Audio-MCA-InterSpec-Bridge/releases).
+  Each release has a bundle for Windows (`mcabridge-win64.zip`), macOS
   (`mcabridge-macos-arm64.app.tar.gz`, `mcabridge-macos-x86_64.app.tar.gz`) and
   Linux (`mcabridge-linux-x86_64.tar.gz`). Unpack, run — no Python needed.
   Each bundle is a single `mcabridge` executable: **no arguments opens the
   GUI**; pass flags (`--list`, `--wav …`, `--seconds …`) for headless CLI use
   (see [CLI](#cli)). On macOS it's a proper `.app`; on Linux and Windows the
-  archive contains a self-contained folder.
+  archive contains a self-contained folder. If no release is published yet,
+  install from source (below) — it takes a minute.
 - **From source**: see [Install](#install) below (installs `mcabridge` and
   `mcabridge-gui` entry points; `mcabridge` with no args opens the GUI too).
 
@@ -95,12 +148,16 @@ Sandia's own SpecUtils library for writing files. What you get:
 ## Install
 
 ```bash
-git clone https://github.com/<you>/mcabridge && cd mcabridge
+git clone https://github.com/EverythingsComputer/Audio-MCA-InterSpec-Bridge.git
+cd Audio-MCA-InterSpec-Bridge
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[gui,specutils]"
 ```
 
-PortAudio (used by `sounddevice`) needs the system library:
+Windows: use the PowerShell steps in [Quick start (Windows)](#quick-start-windows-powershell) —
+everything above it applies, PortAudio included.
+
+PortAudio (used by `sounddevice`) needs the system library on Linux:
 
 ```bash
 sudo apt install libportaudio2      # Debian/Ubuntu
@@ -108,15 +165,18 @@ sudo apt install libportaudio2      # Debian/Ubuntu
 ```
 
 Without root you can unpack the distro package into `.local/lib` (see
-`scripts/bundle_portaudio.sh`) — mcabridge auto-loads it as a fallback.
+`scripts/bundle_portaudio.sh`) — mcabridge auto-loads it as a fallback. On
+Windows and macOS nothing extra is needed: the `sounddevice` wheel ships
+PortAudio itself.
 
 ## One-time InterSpec setup (config only — no code changes)
 
 Live push uses InterSpec's MCP API, which ships **disabled**. Enable it once;
 nothing else about InterSpec is touched, and the setting survives updates. Any
 InterSpec build that contains the MCP server works (mcabridge was developed and
-verified against the Linux `.deb` 1.0.14). If your build predates the MCP API,
-everything still works via `--push-mode launch` (see fallbacks).
+verified against the Linux `.deb` 1.0.14 and a Windows x64 build). If your
+build predates the MCP API, everything still works via `--push-mode launch`
+(see fallbacks).
 
 ### Option A — from inside InterSpec (GUI)
 
@@ -127,13 +187,20 @@ everything still works via `--push-mode launch` (see fallbacks).
    InterSpec restart needed.
 3. Give mcabridge the same token: create `~/.config/mcabridge/mcp.json`
    containing `{"bearer_token": "<your token>"}` (or export
-   `MCABRIDGE_MCP_TOKEN`).
+   `MCABRIDGE_MCP_TOKEN`). On Windows the file lives at
+   `%APPDATA%\mcabridge\mcp.json`; on macOS at
+   `~/Library/Application Support/...` equivalents — or just run the script
+   in Option B, which knows all three locations.
 
 ### Option B — script it
 
 ```bash
 python scripts/setup_interspec_mcp.py --token "$(openssl rand -hex 16)"
-# then restart InterSpec
+# Windows PowerShell instead of openssl:
+#   $token = py -c "import secrets; print(secrets.token_hex(32))"
+#   .\.venv\Scripts\python.exe .\scripts\setup_interspec_mcp.py --token $token
+# then restart InterSpec (close it *before* running the script so it can't
+# overwrite the config on exit, and reopen it afterwards)
 ```
 
 The script enables `<McpServer><Enabled>true</Enabled>` + your token in
@@ -146,7 +213,8 @@ don't have one; existing files are backed up to `.bak`) and writes the matching
 
 Copy `<install>/resources/app/data/llm_config.xml` (Linux `.deb`:
 `/opt/InterSpec/resources/app/data/`) to your InterSpec user dir
-(`~/.config/InterSpec/` on Linux), then in that copy:
+(`~/.config/InterSpec/` on Linux, `%APPDATA%\InterSpec\` on Windows), then in
+that copy:
 
 ```xml
 <McpServer version="0">
@@ -178,7 +246,7 @@ Notes:
 ### GUI
 
 ```bash
-mcabridge-gui
+mcabridge-gui          # or: mcabridge with no arguments
 ```
 
 1. Settings → device match `codec` (the GS appears as *USB Audio Codec*),
@@ -245,6 +313,9 @@ mcabridge --energy-cal -1.5,0.734      # embed keV calibration
 mcabridge --wav recording.wav          # offline replay
 ```
 
+On Windows (source install) prefix with `.\.venv\Scripts\` and add `.exe`,
+e.g. `.\.venv\Scripts\mcabridge.exe --check`.
+
 Headless, no MCP (older InterSpec builds — one-time handoff only):
 
 ```bash
@@ -300,11 +371,29 @@ embedded — SpecUtils' ASCII parser drops hand-written cal lines, binary/N42
 round-trip them). Pause gates the processor callback *and* the autosave/push
 loop, so InterSpec holds a frozen frame with clocks stopped.
 
+## Building from source / for distribution
+
+Regular users don't need this — `pip install -e ".[gui,specutils]"` is enough.
+To produce a self-contained bundle (single executable + `_internal/`, no
+Python required on the target machine):
+
+```bash
+python -m venv .venv && source .venv/bin/activate
+pip install -e ".[gui,specutils]" pyinstaller
+./scripts/build_release.sh        # → dist/mcabridge-<platform>.tar.gz / .zip
+```
+
+Windows: `bash scripts/build_release.sh` from Git Bash. GitHub CI
+(`.github/workflows/build.yml`) builds all four bundles on every `v*` tag and
+attaches them to a Release; note the workflow pins **Python 3.12** because
+that is the newest version with prebuilt SandiaSpecUtils wheels.
+
 ## Limitations & roadmap
 
 - Live push requires InterSpec with the MCP API (2026+/1.0.x builds; verified
-  on the Linux `.deb` 1.0.14). Older builds: `--push-mode launch` works as a
-  one-time handoff only (see the Push modes table) — not a live feed.
+  on the Linux `.deb` 1.0.14 and a Windows x64 build). Older builds:
+  `--push-mode launch` works as a one-time handoff only (see the Push modes
+  table) — not a live feed.
 - If InterSpec is *not* running, MCP pushes fail until it starts (mcabridge
   keeps acquiring and saving regardless; start InterSpec and pushes resume on
   the next autosave).

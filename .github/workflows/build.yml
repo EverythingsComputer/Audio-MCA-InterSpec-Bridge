@@ -23,16 +23,18 @@ jobs:
             label: linux-x86_64
           - os: macos-14              # Apple Silicon
             label: macos-arm64
-          - os: macos-13              # Intel
+          - os: macos-15-intel        # Intel (macos-13 runners were retired 2025-12)
             label: macos-x86_64
           - os: windows-2022
             label: win64
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
+          # 3.12 = newest version SandiaSpecUtils ships prebuilt wheels for
+          # (cp312 abi3). Do not bump past 3.12 without checking PyPI first.
           python-version: "3.12"
 
       - name: Install deps (Unix)
@@ -69,19 +71,12 @@ jobs:
 
       - name: Build bundle (Windows)
         if: runner.os == 'Windows'
-        shell: pwsh
+        shell: bash   # git-bash ships on windows runners; one build path for all OSes
         run: |
-          # build_release.sh is bash; replicate its Windows branch in pwsh.
-          python -m PyInstaller --noconfirm mcabridge.spec
-          $ver = python -c "import mcabridge; print(mcabridge.__version__)"
-          $dist = "dist/mcabridge-$ver"
-          if (Test-Path $dist) { Remove-Item -Recurse -Force $dist }
-          Copy-Item -Recurse dist/mcabridge-app $dist
-          Copy-Item README.md LICENSE $dist
-          Compress-Archive -Path $dist -DestinationPath "dist/mcabridge-win64.zip"
-          Get-ChildItem dist
+          bash scripts/build_release.sh
+          ls -la dist/
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: mcabridge-${{ matrix.label }}
           path: |
@@ -94,7 +89,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v6
         with:
           pattern: mcabridge-*
           merge-multiple: true
@@ -116,7 +111,7 @@ jobs:
             `mcabridge` executable: run with **no arguments** to open the GUI,
             or pass flags for headless CLI use (`--list`, `--wav FILE`, …).
 
-            - **Windows**: unzip, run `mcabridge\mcabridge.exe`.
+            - **Windows**: unzip, run `mcabridge-*\mcabridge.exe`.
             - **macOS**: unpack, drag `mcabridge.app` to Applications. It is
               ad-hoc signed (not notarized): first launch via right-click →
               Open, or `xattr -dr com.apple.quarantine mcabridge.app`.
