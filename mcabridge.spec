@@ -30,6 +30,7 @@ def _hiddenimports():
         "mcabridge.dsp",
         "mcabridge.engine",
         "mcabridge.mcp",
+        "mcabridge.setup",
         "mcabridge.writers",
     ]
     # GUI deps are optional at runtime; include only if installed so the spec

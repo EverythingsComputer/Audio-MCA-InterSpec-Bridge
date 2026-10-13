@@ -11,6 +11,7 @@ import sys
 
 import numpy as np
 from PySide6.QtCore import QTimer, Qt
+from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog,
                                QDialogButtonBox, QDoubleSpinBox, QFileDialog,
                                QFormLayout, QGroupBox, QHBoxLayout, QLabel,
@@ -23,6 +24,146 @@ from .capture import AudioStreamSource, WavSource
 from .dsp import ProcessorConfig
 from .engine import Engine
 from .writers import HAVE_SPECUTILS
+
+
+class McpTokenDialog(QDialog):
+    """Shared-token setup for the InterSpec MCP push, done inside mcabridge.
+
+    The same token must end up in two places: mcabridge's own mcp.json (which
+    this dialog writes directly) and InterSpec — either written into its
+    llm_config.xml by this dialog ("Configure both", run with InterSpec
+    closed), or pasted manually into Tools -> LLM Assistant here in the GUI.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        from . import setup as msetup
+        self.setup = msetup
+        self.setWindowTitle("InterSpec MCP token")
+        self.setMinimumWidth(560)
+        lay = QVBoxLayout(self)
+
+        intro = QLabel(
+            "One shared token lets mcabridge push into the running InterSpec.\n"
+            "Generate one here, then either click <b>Configure both</b> (needs\n"
+            "InterSpec closed) or paste it into InterSpec yourself:\n"
+            "<b>Tools → LLM Assistant → MCP Server → token → Save</b>.")
+        intro.setTextFormat(Qt.RichText)
+        lay.addWidget(intro)
+
+        row = QHBoxLayout()
+        self.token_edit = QLineEdit()
+        self.token_edit.setEchoMode(QLineEdit.Password)
+        self.token_edit.setPlaceholderText("bearer token (hex)")
+        self.btn_gen = QPushButton("Generate")
+        self.btn_gen.setToolTip("Generate a fresh random token (does not save yet).")
+        self.btn_reveal = QPushButton("Show")
+        self.btn_reveal.setCheckable(True)
+        self.btn_reveal.toggled.connect(
+            lambda on: self.token_edit.setEchoMode(
+                QLineEdit.Normal if on else QLineEdit.Password))
+        self.btn_copy = QPushButton("Copy")
+        row.addWidget(self.token_edit, stretch=1)
+        row.addWidget(self.btn_gen)
+        row.addWidget(self.btn_reveal)
+        row.addWidget(self.btn_copy)
+        lay.addLayout(row)
+
+        saved = self.setup.read_bridge_token()
+        if saved:
+            self.token_edit.setText(saved)
+            status = QLabel(f"A token is already saved for mcabridge "
+                            f"({saved[:4]}…{saved[-4:]}). Leave it as-is unless "
+                            "you also change it in InterSpec.")
+        else:
+            status = QLabel("No token saved yet — click Generate.")
+        status.setStyleSheet("color:#9fb6c9;")
+        lay.addWidget(status)
+
+        btns = QHBoxLayout()
+        self.btn_save = QPushButton("Save for mcabridge")
+        self.btn_save.setToolTip("Write the token to mcabridge's mcp.json only "
+                                 "(you paste it into InterSpec yourself).")
+        self.btn_both = QPushButton("Configure both (InterSpec + mcabridge)")
+        self.btn_both.setToolTip(
+            "Writes the token into InterSpec's llm_config.xml AND mcabridge's\n"
+            "mcp.json, and enables its MCP server. CLOSE InterSpec first — a\n"
+            "running instance overwrites that file when it exits.")
+        self.btn_test = QPushButton("Test connection")
+        self.btn_test.setToolTip("mcabridge --check: is the InterSpec MCP API "
+                                 "reachable and does the token work?")
+        btns.addWidget(self.btn_save)
+        btns.addWidget(self.btn_both)
+        btns.addWidget(self.btn_test)
+        btns.addStretch(1)
+        lay.addLayout(btns)
+
+        self.status = QLabel("")
+        self.status.setWordWrap(True)
+        self.status.setTextFormat(Qt.RichText)
+        lay.addWidget(self.status)
+
+        close = QDialogButtonBox(QDialogButtonBox.Close)
+        close.rejected.connect(self.reject)
+        close.accepted.connect(self.reject)
+        lay.addWidget(close)
+
+        self.btn_gen.clicked.connect(self._generate)
+        self.btn_copy.clicked.connect(self._copy)
+        self.btn_save.clicked.connect(self._save)
+        self.btn_both.clicked.connect(self._both)
+        self.btn_test.clicked.connect(self._test)
+
+    def _show(self, msg: str, ok: bool = True):
+        color = "#8fd08f" if ok else "#e0a0a0"
+        self.status.setText(f'<span style="color:{color}">{msg}</span>')
+
+    def _generate(self):
+        self.token_edit.setText(self.setup.generate_token())
+        self.btn_reveal.setChecked(True)
+        self._show("New token generated — save it, then set the same one in "
+                   "InterSpec (paste or 'Configure both').")
+
+    def _copy(self):
+        t = self.token_edit.text().strip()
+        if t:
+            QGuiApplication.clipboard().setText(t)
+            self._show("Token copied to clipboard — paste it into InterSpec's "
+                       "LLM Assistant MCP token field.")
+
+    def _save(self):
+        try:
+            path = self.setup.save_bridge_token(self.token_edit.text())
+        except ValueError as e:
+            self._show(str(e), ok=False)
+            return
+        self._show(f"Saved for mcabridge → {path}. Now set the same token in "
+                   "InterSpec (Tools → LLM Assistant) and click Test.")
+
+    def _both(self):
+        try:
+            log = self.setup.configure_interspec(self.token_edit.text())
+            path = self.setup.save_bridge_token(self.token_edit.text())
+        except Exception as e:
+            self._show(f"Failed: {e}", ok=False)
+            return
+        self._show("Configured both sides:<br>" + "<br>".join(
+            log[:3]) + f"<br>bridge token → {path}<br>"
+            "Restart InterSpec, then click Test connection.")
+
+    def _test(self):
+        from .mcp import McpPusher
+        try:
+            p = McpPusher(bearer_token=self.token_edit.text().strip() or None)
+            p._ensure()
+            self._show(f"OK: InterSpec MCP reachable on port {p.port}; token "
+                       "accepted.")
+        except Exception as e:
+            self._show(f"NOT READY: {e}<br>Is InterSpec running with MCP "
+                       "enabled, and is the token identical on both sides?",
+                       ok=False)
+
+
 
 
 class SettingsDialog(QDialog):
@@ -178,12 +319,18 @@ older InterSpec builds without MCP.""")
             "Command run as `<cmd> <file>` after each autosave in launch-cmd "
             "mode (one-time handoff only - see mode tooltip).")
         self.push_cmd_edit.setMaximumWidth(140)
+        self.btn_token = QPushButton("MCP token…")
+        self.btn_token.setToolTip(
+            "Generate / enter / test the shared InterSpec MCP bearer token.\n"
+            "Same token goes in InterSpec (Tools → LLM Assistant) and here;\n"
+            "'Configure both' can write it into InterSpec's config directly.")
         pushrow.addWidget(self.chk_push)
         pushrow.addWidget(self.push_mode_combo)
         pushrow.addWidget(QLabel("lane:"))
         pushrow.addWidget(self.lane_combo)
         pushrow.addWidget(QLabel("cmd:"))
         pushrow.addWidget(self.push_cmd_edit)
+        pushrow.addWidget(self.btn_token)
         pushrow.addStretch(1)
         layout.addLayout(pushrow)
 
@@ -209,6 +356,7 @@ older InterSpec builds without MCP.""")
         self.btn_wav.clicked.connect(self.on_wav)
         self.btn_live.clicked.connect(self.on_back_to_live)
         self.btn_open_out.clicked.connect(self.on_open_out)
+        self.btn_token.clicked.connect(self.on_token)
 
         self.timer = QTimer(self)
         self.timer.setInterval(500)
@@ -314,6 +462,10 @@ older InterSpec builds without MCP.""")
         self._wav_path = None
         self.btn_live.setEnabled(False)
         self.setWindowTitle("Audio MCA → InterSpec Bridge")
+
+    def on_token(self):
+        dlg = McpTokenDialog(parent=self)
+        dlg.exec()
 
     def on_open_out(self):
         import os, subprocess, platform

@@ -29,9 +29,9 @@ pip install -e ".[gui,specutils]"
 #    Linux only, if PortAudio is missing:  sudo apt install libportaudio2
 
 # 2. One-time InterSpec setup (enables the MCP API + writes mcabridge's token):
-python scripts/setup_interspec_mcp.py --token "$(openssl rand -hex 16)"
-#    then restart InterSpec (or enable it via Tools → LLM Assistant in the GUI)
-
+mcabridge --setup-mcp          # generates a token, configures both sides
+#    (or open mcabridge-gui and click "MCP token…" -> Generate -> Configure both)
+#    run it with InterSpec CLOSED, then restart InterSpec
 # 3. Verify:
 mcabridge --check
 #    OK: InterSpec MCP reachable on port NNNNN; token accepted.
@@ -73,15 +73,13 @@ py -m venv .venv
 .\.venv\Scripts\python.exe -m pip install --upgrade pip
 .\.venv\Scripts\python.exe -m pip install -e ".[gui,specutils]"
 
-# 3. Generate a token, paste it into InterSpec: Tools → LLM Assistant →
-#    enable MCP Server, set the token, Save. Then CLOSE InterSpec.
-$token = py -c "import secrets; print(secrets.token_hex(32))"
-$token
+# 3. One-time setup with InterSpec CLOSED: generates a token and configures
+#    both sides (InterSpec's llm_config.xml + mcabridge's token store).
+.\.venv\Scripts\mcabridge.exe --setup-mcp
+#    (or skip the CLI: run .\.venv\Scripts\mcabridge-gui.exe, click
+#     "MCP token…" → Generate → Configure both)
 
-# 4. With InterSpec closed, configure both sides with the same token:
-.\.venv\Scripts\python.exe .\scripts\setup_interspec_mcp.py --token $token
-
-# 5. Reopen InterSpec (confirm MCP Server is still enabled), then verify:
+# 4. Reopen InterSpec (confirm MCP Server is still enabled), then verify:
 .\.venv\Scripts\mcabridge.exe --check
 ```
 
@@ -178,38 +176,56 @@ verified against the Linux `.deb` 1.0.14 and a Windows x64 build). If your
 build predates the MCP API, everything still works via `--push-mode launch`
 (see fallbacks).
 
-### Option A — from inside InterSpec (GUI)
+### Option A — inside mcabridge (GUI, recommended)
+
+Close InterSpec, then run `mcabridge-gui` and click **MCP token…** on the push
+row:
+
+1. **Generate** — makes a fresh random token (Show/Copy buttons reveal it).
+2. **Configure both** — writes the token + `<Enabled>true</Enabled>` into
+   InterSpec's `llm_config.xml` *and* saves it for mcabridge in one click.
+   Restart InterSpec afterwards.
+3. Alternatively keep using InterSpec's own switch: **Save for mcabridge**,
+   reopen InterSpec → Tools → LLM Assistant → MCP Server → paste the same
+   token → Save (no restart needed there).
+4. **Test connection** runs the same check as `mcabridge --check`.
+
+### Option B — CLI one-shot
+
+```bash
+mcabridge --setup-mcp          # with InterSpec CLOSED; generates a token,
+                               # configures both sides, prints the token
+# then restart InterSpec and:
+mcabridge --check
+```
+
+Related commands: `mcabridge --gen-token` (just print a new token),
+`mcabridge --set-token <token>` (or `--set-token -` to pipe it in) saves the
+bridge side only — use that when you set InterSpec's token via its own GUI.
+`scripts/setup_interspec_mcp.py` is an equivalent standalone script for checkouts.
+
+Both paths enable `<McpServer><Enabled>true</Enabled>` + your token in
+`~/.config/InterSpec/llm_config.xml` (copied from the install template if you
+don't have one; existing files are backed up to `.bak`) and write the matching
+`~/.config/mcabridge/mcp.json`. Windows: the configs live under
+`%APPDATA%\InterSpec` / `%APPDATA%\mcabridge`; macOS under
+`~/Library/Application Support/...`.
+
+### Option C — from inside InterSpec (GUI)
 
 1. Launch InterSpec → **Tools menu → LLM Assistant**.
 2. Open its settings/configuration panel, tick the **MCP Server** checkbox,
    and set a bearer token (any string except the placeholder
    `INVALID-BEARER-TOKEN`). Save/apply — the MCP server starts live; no
    InterSpec restart needed.
-3. Give mcabridge the same token: create `~/.config/mcabridge/mcp.json`
-   containing `{"bearer_token": "<your token>"}` (or export
-   `MCABRIDGE_MCP_TOKEN`). On Windows the file lives at
-   `%APPDATA%\mcabridge\mcp.json`; on macOS at
-   `~/Library/Application Support/...` equivalents — or just run the script
-   in Option B, which knows all three locations.
+3. Give mcabridge the same token: click **MCP token…** in mcabridge's GUI and
+   use **Save for mcabridge** (or run `mcabridge --set-token <token>`). This
+   writes `~/.config/mcabridge/mcp.json` containing
+   `{"bearer_token": "<your token>"}` (or export `MCABRIDGE_MCP_TOKEN`).
+   Windows: `%APPDATA%\mcabridge\mcp.json`; macOS:
+   `~/Library/Application Support/mcabridge/mcp.json`.
 
-### Option B — script it
-
-```bash
-python scripts/setup_interspec_mcp.py --token "$(openssl rand -hex 16)"
-# Windows PowerShell instead of openssl:
-#   $token = py -c "import secrets; print(secrets.token_hex(32))"
-#   .\.venv\Scripts\python.exe .\scripts\setup_interspec_mcp.py --token $token
-# then restart InterSpec (close it *before* running the script so it can't
-# overwrite the config on exit, and reopen it afterwards)
-```
-
-The script enables `<McpServer><Enabled>true</Enabled>` + your token in
-`~/.config/InterSpec/llm_config.xml` (copied from the install template if you
-don't have one; existing files are backed up to `.bak`) and writes the matching
-`~/.config/mcabridge/mcp.json`. Windows: the config lives under
-`%APPDATA%\InterSpec`; macOS under `~/Library/Application Support/InterSpec`.
-
-### Option C — manual XML tweak
+### Option D — manual XML tweak
 
 Copy `<install>/resources/app/data/llm_config.xml` (Linux `.deb`:
 `/opt/InterSpec/resources/app/data/`) to your InterSpec user dir
@@ -306,6 +322,9 @@ the autosave push with no InterSpec changes.
 ```bash
 mcabridge --list                       # capture devices
 mcabridge --check                      # InterSpec MCP readiness
+mcabridge --setup-mcp                  # one-shot token + config for both sides
+mcabridge --gen-token                  # print a fresh bearer token
+mcabridge --set-token TOKEN            # save the bridge's bearer token
 mcabridge                              # live: acquire + MCP push (defaults)
 mcabridge --seconds 600 --formats spe,spc,n42
 mcabridge --lane Background            # push into the background lane

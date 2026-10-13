@@ -70,11 +70,56 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--check", action="store_true",
                    help="verify InterSpec MCP push readiness (running server + "
                         "token) and exit")
+    p.add_argument("--gen-token", action="store_true",
+                   help="print a fresh random bearer token and exit "
+                        "(then set the same one in InterSpec: Tools -> LLM "
+                        "Assistant, and save it here with --set-token)")
+    p.add_argument("--set-token", metavar="TOKEN", default=None,
+                   help="save TOKEN as mcabridge's MCP bearer token "
+                        "(~/.config/mcabridge/mcp.json); '-' reads from stdin")
+    p.add_argument("--setup-mcp", action="store_true",
+                   help="one-shot: generate a token (or use --set-token's), "
+                        "enable + set it in InterSpec's llm_config.xml AND save "
+                        "it for mcabridge. Run with InterSpec CLOSED, restart "
+                        "it afterwards. Add --print-only to preview.")
+    p.add_argument("--print-only", action="store_true",
+                   help="with --setup-mcp: show what would change, write nothing")
     return p
 
 
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
+
+    # -- token management (GUI-free; the GUI has the same flow under 'MCP
+    # token…'). Handled before the no-flags->GUI fallback.
+    if args.gen_token or args.set_token or args.setup_mcp:
+        from . import setup as msetup
+        token = None
+        if args.set_token:
+            token = (sys.stdin.read() if args.set_token == "-"
+                     else args.set_token).strip()
+        try:
+            if args.gen_token:
+                print(msetup.generate_token())
+                return 0
+            if args.setup_mcp:
+                tok, log = msetup.setup_mcp(token=token,
+                                            print_only=args.print_only)
+                for line in log:
+                    print(line)
+                if not args.print_only:
+                    print(f"bearer token      : {tok}")
+                return 0
+            # --set-token alone (token is non-None here: this branch is only
+            # reached when args.set_token was given)
+            path = msetup.save_bridge_token(token or "")
+            print(f"saved MCP bearer token -> {path}\n"
+                  "Now set the SAME token in InterSpec (Tools -> LLM "
+                  "Assistant -> MCP Server, Save), then: mcabridge --check")
+            return 0
+        except Exception as e:
+            print(f"ERROR: {e}", file=sys.stderr)
+            return 1
 
     # No flags at all -> open the GUI (this is also how the frozen bundle's
     # double-click launch works; pass --help for usage, any flag for CLI mode).
