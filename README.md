@@ -345,8 +345,8 @@ pip install -e ".[gui,specutils]" pyinstaller
 
 Windows: `bash scripts/build_release.sh` from Git Bash. GitHub CI
 (`.github/workflows/build.yml`) builds all four bundles on every `v*` tag and
-attaches them to a Release; the workflow pins **Python 3.12** because that is
-the newest version with prebuilt SandiaSpecUtils wheels.
+attaches them to a Release; each bundle must pass a post-build smoke test
+(`--gen-token`) before it can be published.
 
 ## Limitations & roadmap
 

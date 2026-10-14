@@ -33,9 +33,14 @@ jobs:
 
       - uses: actions/setup-python@v6
         with:
-          # 3.12 = newest version SandiaSpecUtils ships prebuilt wheels for
-          # (cp312 abi3). Do not bump past 3.12 without checking PyPI first.
-          python-version: "3.12"
+          # 3.14: SandiaSpecUtils ships cp314 wheels, and Python 3.14 (like the
+          # python-build-standalone builds setup-python installs) produces
+          # working PyInstaller onedir launchers. The previous 3.12 pin built
+          # launchers that died at startup with "Failed to load Python shared
+          # library /tmp/_MEI*/libpython3.12.so.1.0" (v0.2.1/v0.2.2 assets).
+          # The smoke test below guards this: a broken bundle now fails CI
+          # instead of shipping.
+          python-version: "3.14"
 
       - name: Install deps (Unix)
         if: runner.os != 'Windows'
@@ -75,6 +80,34 @@ jobs:
         run: |
           bash scripts/build_release.sh
           ls -la dist/
+
+      - name: Smoke test built bundle (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          # The v0.2.1/v0.2.2 bundles shipped with launchers that crashed at
+          # startup; never release without proving the binary runs.
+          BIN=$(find dist -maxdepth 3 -type f \( -name mcabridge -o -path '*MacOS/mcabridge' \) | head -1)
+          echo "smoke-testing: $BIN"
+          test -n "$BIN"
+          chmod +x "$BIN" || true
+          OUT=$(QT_QPA_PLATFORM=offscreen PYINSTALLER_NO_MANIFEST=1 "$BIN" --gen-token)
+          echo "token: $OUT"
+          if ! echo "$OUT" | grep -Eq '^[0-9a-f]{64}$'; then
+            echo "::error::built bundle failed smoke test (--gen-token)"; exit 1
+          fi
+
+      - name: Smoke test built bundle (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $BIN = Get-ChildItem dist -Recurse -Filter mcabridge.exe | Select-Object -First 1
+          echo "smoke-testing: $($BIN.FullName)"
+          $OUT = & $BIN.FullName --gen-token
+          echo "token: $OUT"
+          if ($OUT -notmatch '^[0-9a-f]{64}$') {
+            echo "::error::built bundle failed smoke test (--gen-token)"; exit 1
+          }
 
       - uses: actions/upload-artifact@v6
         with:
