@@ -102,7 +102,11 @@ jobs:
           set -e
           cat smoke_diag.txt >> smoke_out.txt
           echo "exit=$rc"; cat smoke_out.txt
-          grep -Eq '^[0-9a-f]{64}$' smoke_out.txt || { echo "::error::smoke test failed"; exit 1; }
+          if ! grep -Eq '^[0-9a-f]{64}$' smoke_out.txt; then
+            # surface the log publicly (artifacts need auth; annotations don't)
+            python3 -c "import urllib.parse,sys; print('::error::SMOKE_LOG='+urllib.parse.quote(open('smoke_out.txt').read()))"
+            exit 1
+          fi
 
       - name: Smoke test built bundle (Windows)
         if: runner.os == 'Windows'
@@ -121,7 +125,11 @@ jobs:
           cat smoke_diag.txt >> smoke_out.txt
           tr -d '\r' < smoke_out.txt > smoke_out_clean.txt || true
           echo "exit=$rc"; cat smoke_out_clean.txt
-          grep -Eq '^[0-9a-f]{64}$' smoke_out_clean.txt || { echo "::error::smoke test failed"; exit 1; }
+          if ! grep -Eq '^[0-9a-f]{64}$' smoke_out_clean.txt; then
+            python3 -c "import urllib.parse,sys; print('::error::SMOKE_LOG='+urllib.parse.quote(open('smoke_out_clean.txt').read()))" \
+              || python -c "import urllib.parse,sys; print('::error::SMOKE_LOG='+urllib.parse.quote(open('smoke_out_clean.txt').read()))"
+            exit 1
+          fi
 
       - name: Upload smoke log
         if: always()
