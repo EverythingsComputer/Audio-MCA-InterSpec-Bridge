@@ -33,20 +33,37 @@ jobs:
 
       - uses: actions/setup-python@v6
         with:
-          # 3.14: SandiaSpecUtils ships cp314 wheels, and Python 3.14 (like the
-          # python-build-standalone builds setup-python installs) produces
-          # working PyInstaller onedir launchers. The previous 3.12 pin built
-          # launchers that died at startup with "Failed to load Python shared
-          # library /tmp/_MEI*/libpython3.12.so.1.0" (v0.2.1/v0.2.2 assets).
-          # The smoke test below guards this: a broken bundle now fails CI
-          # instead of shipping.
           python-version: "3.14"
+
+      - name: Install standalone build interpreter (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          # IMPORTANT: do not build bundles with setup-python's hostedtoolcache
+          # interpreter. Its PyInstaller launchers come up in onefile mode and
+          # crash at startup ("Failed to load Python shared library /tmp/_MEI…",
+          # shipped broken in v0.2.1–v0.2.5, fixed here). python-build-standalone
+          # (the flavor Windows runners ship and the one verified working) is
+          # used instead; the smoke test below re-proves it every release.
+          PBS_REL=20261013
+          PBS_VER=3.14.8
+          case "$(uname -s)-$(uname -m)" in
+            Linux-x86_64)     PBS_TRIPLE=x86_64-unknown-linux-gnu ;;
+            Darwin-arm64)     PBS_TRIPLE=aarch64-apple-darwin ;;
+            Darwin-x86_64)    PBS_TRIPLE=x86_64-apple-darwin ;;
+            *) echo "unsupported runner"; exit 1 ;;
+          esac
+          PBS_URL="https://github.com/astral-sh/python-build-standalone/releases/download/${PBS_REL}/cpython-${PBS_VER}+${PBS_REL}-${PBS_TRIPLE}-install_only.tar.gz"
+          echo "downloading $PBS_URL"
+          curl -sSL "$PBS_URL" | tar xz -C "$HOME"
+          "$HOME/python/bin/python3" -V
 
       - name: Install deps (Unix)
         if: runner.os != 'Windows'
         run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[gui,specutils]" pyinstaller
+          $HOME/python/bin/python3 -m venv .venv-build
+          .venv-build/bin/pip install --upgrade pip
+          .venv-build/bin/pip install -e ".[gui,specutils]" pyinstaller
 
       - name: Install deps (Windows)
         if: runner.os == 'Windows'
@@ -71,7 +88,9 @@ jobs:
         shell: bash
         run: |
           chmod +x scripts/build_release.sh
-          ./scripts/build_release.sh
+          # PY must be the standalone-build venv (see interpreter step above);
+          # hostedtoolcache python produces launchers that crash at startup.
+          PY=$PWD/.venv-build/bin/python ./scripts/build_release.sh
           ls -la dist/
 
       - name: Build bundle (Windows)
@@ -92,8 +111,8 @@ jobs:
           test -n "$BIN"
           chmod +x "$BIN" || true
           { echo "== uname:"; uname -a
-            echo "== python used for build:"; python -V; which python
-            echo "== pyinstaller:"; python -m PyInstaller --version
+            echo "== python used for build:"; $PWD/.venv-build/bin/python -V
+            echo "== pyinstaller:"; $PWD/.venv-build/bin/python -m PyInstaller --version
             echo "== ldd (missing?):"; ldd "$(dirname "$BIN")"/* 2>/dev/null | grep -i "not found" || true
           } > smoke_diag.txt 2>&1 || true
           set +e
