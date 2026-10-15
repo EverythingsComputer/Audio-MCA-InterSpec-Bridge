@@ -48,10 +48,15 @@ Linux)
   ;;
 Darwin)
   ARCH=$(uname -m); [ "$ARCH" = "arm64" ] && ARCH=arm64 || ARCH=x86_64
-  # turn the onedir into a proper .app (Info.plist + MacOS/ layout)
+  # turn the onedir into a proper .app (Info.plist + MacOS/ layout).
+  # NOTE: PyInstaller >=6's bootloader locates the contents directory at
+  # Contents/Frameworks when the executable lives in *.app/Contents/MacOS —
+  # so _internal must be MOVED there (renamed), not nested under MacOS/,
+  # or the launcher dies with "Failed to load Python shared library
+  # …/Contents/Frameworks/libpython…".
   APP="$DIST/mcabridge.app"
   mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-  mv "$DIST/_internal" "$APP/Contents/MacOS/_internal"
+  mv "$DIST/_internal" "$APP/Contents/Frameworks"
   cp "$DIST/mcabridge" "$APP/Contents/MacOS/mcabridge"
   cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
