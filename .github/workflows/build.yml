@@ -91,23 +91,45 @@ jobs:
           echo "smoke-testing: $BIN"
           test -n "$BIN"
           chmod +x "$BIN" || true
-          OUT=$(QT_QPA_PLATFORM=offscreen PYINSTALLER_NO_MANIFEST=1 "$BIN" --gen-token)
-          echo "token: $OUT"
-          if ! echo "$OUT" | grep -Eq '^[0-9a-f]{64}$'; then
-            echo "::error::built bundle failed smoke test (--gen-token)"; exit 1
-          fi
+          { echo "== uname:"; uname -a
+            echo "== python used for build:"; python -V; which python
+            echo "== pyinstaller:"; python -m PyInstaller --version
+            echo "== ldd (missing?):"; ldd "$(dirname "$BIN")"/* 2>/dev/null | grep -i "not found" || true
+          } > smoke_diag.txt 2>&1 || true
+          set +e
+          QT_QPA_PLATFORM=offscreen "$BIN" --gen-token > smoke_out.txt 2>&1
+          rc=$?
+          set -e
+          cat smoke_diag.txt >> smoke_out.txt
+          echo "exit=$rc"; cat smoke_out.txt
+          grep -Eq '^[0-9a-f]{64}$' smoke_out.txt || { echo "::error::smoke test failed"; exit 1; }
 
       - name: Smoke test built bundle (Windows)
         if: runner.os == 'Windows'
-        shell: pwsh
+        shell: bash   # git-bash, same find/regex semantics as the Unix step
         run: |
-          $BIN = Get-ChildItem dist -Recurse -Filter mcabridge.exe | Select-Object -First 1
-          echo "smoke-testing: $($BIN.FullName)"
-          $OUT = & $BIN.FullName --gen-token
-          echo "token: $OUT"
-          if ($OUT -notmatch '^[0-9a-f]{64}$') {
-            echo "::error::built bundle failed smoke test (--gen-token)"; exit 1
-          }
+          BIN=$(find dist -maxdepth 3 -type f -name mcabridge.exe | head -1)
+          echo "smoke-testing: $BIN"
+          test -n "$BIN"
+          { echo "== python used for build:"; python -V 2>&1 || py -V 2>&1
+            echo "== pyinstaller:"; python -m PyInstaller --version 2>&1
+          } > smoke_diag.txt 2>&1 || true
+          set +e
+          "$BIN" --gen-token > smoke_out.txt 2>&1
+          rc=$?
+          set -e
+          cat smoke_diag.txt >> smoke_out.txt
+          tr -d '\r' < smoke_out.txt > smoke_out_clean.txt || true
+          echo "exit=$rc"; cat smoke_out_clean.txt
+          grep -Eq '^[0-9a-f]{64}$' smoke_out_clean.txt || { echo "::error::smoke test failed"; exit 1; }
+
+      - name: Upload smoke log
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: smoke-log-${{ matrix.label }}
+          path: smoke_out.txt
+          if-no-files-found: ignore
 
       - uses: actions/upload-artifact@v6
         with:
