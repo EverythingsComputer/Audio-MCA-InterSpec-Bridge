@@ -107,8 +107,13 @@ jobs:
           # The v0.2.1/v0.2.2 bundles shipped with launchers that crashed at
           # startup; never release without proving the binary runs.
           VER=$(python3 -c "import mcabridge; print(mcabridge.__version__)" 2>/dev/null || cat dist/.bundle_version 2>/dev/null)
-          BIN="dist/mcabridge-$VER/mcabridge"
-          [ -f "$BIN" ] || BIN="dist/mcabridge-$VER/mcabridge.app/Contents/MacOS/mcabridge"
+          # macOS: build_release.sh moves _internal into mcabridge.app, so the
+          # loose dist/mcabridge copy is stale there — always test the .app.
+          if [ "$(uname -s)" = "Darwin" ]; then
+            BIN="dist/mcabridge-$VER/mcabridge.app/Contents/MacOS/mcabridge"
+          else
+            BIN="dist/mcabridge-$VER/mcabridge"
+          fi
           [ -f "$BIN" ] || { echo "::error::no built binary under dist/mcabridge-$VER"; ls -la dist/; exit 1; }
           echo "smoke-testing: $BIN"
           chmod +x "$BIN" || true
