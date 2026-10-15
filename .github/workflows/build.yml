@@ -106,9 +106,11 @@ jobs:
         run: |
           # The v0.2.1/v0.2.2 bundles shipped with launchers that crashed at
           # startup; never release without proving the binary runs.
-          BIN=$(find dist -maxdepth 3 -type f \( -name mcabridge -o -path '*MacOS/mcabridge' \) | head -1)
+          VER=$(python3 -c "import mcabridge; print(mcabridge.__version__)" 2>/dev/null || cat dist/.bundle_version 2>/dev/null)
+          BIN="dist/mcabridge-$VER/mcabridge"
+          [ -f "$BIN" ] || BIN="dist/mcabridge-$VER/mcabridge.app/Contents/MacOS/mcabridge"
+          [ -f "$BIN" ] || { echo "::error::no built binary under dist/mcabridge-$VER"; ls -la dist/; exit 1; }
           echo "smoke-testing: $BIN"
-          test -n "$BIN"
           chmod +x "$BIN" || true
           { echo "== uname:"; uname -a
             echo "== python used for build:"; $PWD/.venv-build/bin/python -V
@@ -129,11 +131,11 @@ jobs:
 
       - name: Smoke test built bundle (Windows)
         if: runner.os == 'Windows'
-        shell: bash   # git-bash, same find/regex semantics as the Unix step
+        shell: bash   # git-bash, same find semantics as the Unix step
         run: |
-          BIN=$(find dist -maxdepth 3 -type f -name mcabridge.exe | head -1)
-          echo "smoke-testing: $BIN"
-          test -n "$BIN"
+          VER=$(python -c "import mcabridge; print(mcabridge.__version__)")
+          BIN="dist/mcabridge-$VER/mcabridge.exe"
+          [ -f "$BIN" ] || { echo "::error::no built binary at $BIN"; ls -la dist/; exit 1; }
           { echo "== python used for build:"; python -V 2>&1 || py -V 2>&1
             echo "== pyinstaller:"; python -m PyInstaller --version 2>&1
           } > smoke_diag.txt 2>&1 || true

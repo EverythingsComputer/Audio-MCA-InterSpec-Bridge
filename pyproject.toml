@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mcabridge"
-version = "0.2.6"
+version = "0.2.7"
 description = "Live gamma-spectroscopy bridge: USB audio-card MCAs (Gammaspectacular GS-PRO-V5 etc.) to InterSpec and friends"
 readme = "README.md"
 requires-python = ">=3.10"

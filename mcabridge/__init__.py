@@ -7,4 +7,4 @@ opened and live-refreshed in Sandia National Labs' InterSpec.
 MIT licensed. See README.md for usage.
 """
 
-__version__ = "0.2.6"
+__version__ = "0.2.7"
