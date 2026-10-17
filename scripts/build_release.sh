@@ -48,65 +48,38 @@ Linux)
   ;;
 Darwin)
   ARCH=$(uname -m); [ "$ARCH" = "arm64" ] && ARCH=arm64 || ARCH=x86_64
-  # turn the onedir into a proper .app (Info.plist + MacOS/ layout).
-  # NOTE: PyInstaller >=6's bootloader locates the contents directory at
-  # Contents/Frameworks when the executable lives in *.app/Contents/MacOS —
-  # so _internal must be MOVED there (renamed), not nested under MacOS/,
-  # or the launcher dies with "Failed to load Python shared library
-  # …/Contents/Frameworks/libpython…".
+  # The spec's BUNDLE target built dist/mcabridge.app with Apple-conformant
+  # layout (data under Contents/Resources, dotted dir names relocated) — the
+  # only layout codesign can seal. Hand-assembling an onedir into an .app put
+  # e.g. numpy-2.5.4.dist-info under Contents/Frameworks, which Apple's
+  # bundle format forbids: `codesign` failed with "bundle format unrecognized,
+  # invalid, or unsuitable", no _CodeSignature/CodeResources was ever created
+  # (the failure was hidden behind 2>/dev/null), and macOS opened the result
+  # as "damaged".
+  APPSRC=dist/mcabridge.app
+  [ -d "$APPSRC" ] || { echo "ERROR: spec BUNDLE target did not produce $APPSRC" >&2; exit 1; }
+  rm -rf "$DIST"; mkdir -p "$DIST"
+  cp -a "$APPSRC" "$DIST/mcabridge.app"
   APP="$DIST/mcabridge.app"
-  mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-  mv "$DIST/_internal" "$APP/Contents/Frameworks"
-  cp "$DIST/mcabridge" "$APP/Contents/MacOS/mcabridge"
-  cat > "$APP/Contents/Info.plist" <<PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-  <key>CFBundleName</key><string>Audio MCA Bridge</string>
-  <key>CFBundleDisplayName</key><string>Audio MCA Bridge</string>
-  <key>CFBundleIdentifier</key><string>com.mcabridge.app</string>
-  <key>CFBundleVersion</key><string>$VERSION</string>
-  <key>CFBundleShortVersionString</key><string>$VERSION</string>
-  <key>CFBundleExecutable</key><string>mcabridge</string>
-  <key>CFBundlePackageType</key><string>APPL</string>
-  <key>NSHighResolutionCapable</key><true/>
-</dict></plist>
-PLIST
   cp README.md LICENSE "$APP/Contents/Resources"/
-  # Clear xattrs first: files carrying stale com.apple.cs.* attributes
-  # ("detritus" from pip/tar copies) make codesign refuse to seal a bundle.
-  # Non-fatal: xattr exits non-zero for files with no xattrs at all.
+  # Clear xattrs: stale com.apple.cs.* attributes ("detritus" from pip/tar)
+  # make codesign refuse files. Non-fatal exit (files may have no xattrs).
   xattr -cr "$APP" 2>/dev/null || true
-  if command -v codesign >/dev/null 2>&1; then
-    echo "== signing bundle =="
-    ls "$APP/Contents/" > codesign_diag.txt 2>&1
-    # --deep seals nested code; stderr goes to a log AND stdout so the CI
-    # annotation below can show it. (v0.2.1–v0.2.9 hid this output entirely.)
-    if ! codesign --force --deep --sign - "$APP" 2> codesign_err.txt; then
-      cat codesign_err.txt
-      python3 -c "import urllib.parse; print('::error::CODESIGN_LOG='+urllib.parse.quote(open('codesign_err.txt').read()+'\n---\n'+open('codesign_diag.txt').read()))" || true
-      exit 1
-    fi
+  chmod +x "$APP/Contents/MacOS/mcabridge"
+  echo "== signing bundle =="
+  # stderr kept visible and annotated on failure (v0.2.1–v0.2.9 hid it).
+  if ! codesign --force --deep --sign - "$APP" 2> codesign_err.txt; then
     cat codesign_err.txt
-    # HARD GATE: never ship an unsealed bundle again.
-    [ -f "$APP/Contents/_CodeSignature/CodeResources" ] || {
-      echo "ERROR: bundle signature missing (_CodeSignature/CodeResources) — refusing to package" >&2
-      exit 1
-    }
-    codesign --verify --deep --strict --verbose=2 "$APP"
-  else
-    # non-mac fallback (e.g. local Linux packaging experiments): seal with rcodesign
-    command -v rcodesign >/dev/null 2>&1 || {
-      echo "ERROR: no codesign/rcodesign available; cannot produce a runnable macOS bundle" >&2
-      exit 1
-    }
-    rcodesign sign --binary-identifier com.mcabridge.app \
-      --exclude 'Contents/Frameworks/*.dist-info' "$APP"
-    [ -f "$APP/Contents/_CodeSignature/CodeResources" ] || {
-      echo "ERROR: bundle signature missing — refusing to package" >&2
-      exit 1
-    }
+    python3 -c "import urllib.parse; print('::error::CODESIGN_LOG='+urllib.parse.quote(open('codesign_err.txt').read()))" || true
+    exit 1
   fi
+  cat codesign_err.txt
+  # HARD GATE: never ship an unsealed bundle again.
+  [ -f "$APP/Contents/_CodeSignature/CodeResources" ] || {
+    echo "ERROR: bundle signature missing (_CodeSignature/CodeResources) — refusing to package" >&2
+    exit 1
+  }
+  codesign --verify --deep --strict --verbose=2 "$APP"
   ( cd "$DIST" && tar czf "../mcabridge-macos-$ARCH.app.tar.gz" "mcabridge.app" )
   echo "== wrote dist/mcabridge-macos-$ARCH.app.tar.gz =="
   ;;

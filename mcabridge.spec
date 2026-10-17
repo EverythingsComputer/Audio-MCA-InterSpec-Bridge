@@ -16,6 +16,13 @@ import os
 
 ROOT = os.path.dirname(os.path.abspath(SPEC))          # noqa: F821 (PyInstaller)
 
+# read __version__ without importing package deps
+_VERSION = "0.0.0"
+with open(os.path.join(ROOT, "mcabridge", "__init__.py"), encoding="utf-8") as _f:
+    for _line in _f:
+        if _line.startswith("__version__"):
+            _VERSION = _line.split("=")[1].strip().strip("\"'")
+
 
 def _hiddenimports():
     imports = [
@@ -73,3 +80,27 @@ coll = COLLECT(
     # distinct from the EXE basename ("mcabridge") to avoid a path collision
     name="mcabridge-app",
 )
+
+# macOS: build a real .app via PyInstaller's BUNDLE target. Manual assembly of
+# an onedir into an .app is NOT signable: Apple forbids dotted directory names
+# under Contents/Frameworks (codesign: "bundle format unrecognized, invalid,
+# or unsuitable" on e.g. numpy-2.5.4.dist-info), so the bundle seal
+# (_CodeSignature/CodeResources) silently fails to be created and macOS
+# reports the app as "damaged". BUNDLE implements Apple's placement rules
+# (data -> Contents/Resources, dot-name relocation) — see PyInstaller's
+# building/osx.py docs.
+import sys as _sys
+if _sys.platform == "darwin":
+    bundle = BUNDLE(
+        coll,
+        name="mcabridge.app",
+        info_plist={
+            "CFBundleName": "Audio MCA Bridge",
+            "CFBundleDisplayName": "Audio MCA Bridge",
+            "CFBundleIdentifier": "com.mcabridge.app",
+            "CFBundleVersion": _VERSION,
+            "CFBundleShortVersionString": _VERSION,
+            "CFBundlePackageType": "APPL",
+            "NSHighResolutionCapable": True,
+        },
+    )
