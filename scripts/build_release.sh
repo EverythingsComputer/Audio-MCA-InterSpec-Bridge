@@ -73,32 +73,40 @@ Darwin)
 </dict></plist>
 PLIST
   cp README.md LICENSE "$APP/Contents/Resources"/
-  # Ad-hoc sign the bundle. macOS reports an unsigned/half-sealed bundle as
-  # "damaged" — since v0.2.9 moved contents into Contents/Frameworks the
-  # bundle seal (_CodeSignature/CodeResources) is mandatory, and it was
-  # missing from EVERY release because the old `codesign ... 2>/dev/null ||`
-  # hid a silent failure (xattr "detritus" on files copied by tar/pip is the
-  # usual cause; clear xattrs first and keep stderr visible).
+  # Clear xattrs first: files carrying stale com.apple.cs.* attributes
+  # ("detritus" from pip/tar copies) make codesign refuse to seal a bundle.
+  # Non-fatal: xattr exits non-zero for files with no xattrs at all.
   xattr -cr "$APP" 2>/dev/null || true
   if command -v codesign >/dev/null 2>&1; then
-    codesign --force --deep --sign - "$APP"
-  elif command -v rcodesign >/dev/null 2>&1; then
-    # fallback for non-mac hosts; exclude non-bundle dirs that rcodesign
-    # would otherwise try to seal as nested bundles (PyInstaller puts plain
-    # data dirs like numpy-*.dist-info under Contents/Frameworks).
+    echo "== signing bundle =="
+    ls "$APP/Contents/" > codesign_diag.txt 2>&1
+    # --deep seals nested code; stderr goes to a log AND stdout so the CI
+    # annotation below can show it. (v0.2.1–v0.2.9 hid this output entirely.)
+    if ! codesign --force --deep --sign - "$APP" 2> codesign_err.txt; then
+      cat codesign_err.txt
+      python3 -c "import urllib.parse; print('::error::CODESIGN_LOG='+urllib.parse.quote(open('codesign_err.txt').read()+'\n---\n'+open('codesign_diag.txt').read()))" || true
+      exit 1
+    fi
+    cat codesign_err.txt
+    # HARD GATE: never ship an unsealed bundle again.
+    [ -f "$APP/Contents/_CodeSignature/CodeResources" ] || {
+      echo "ERROR: bundle signature missing (_CodeSignature/CodeResources) — refusing to package" >&2
+      exit 1
+    }
+    codesign --verify --deep --strict --verbose=2 "$APP"
+  else
+    # non-mac fallback (e.g. local Linux packaging experiments): seal with rcodesign
+    command -v rcodesign >/dev/null 2>&1 || {
+      echo "ERROR: no codesign/rcodesign available; cannot produce a runnable macOS bundle" >&2
+      exit 1
+    }
     rcodesign sign --binary-identifier com.mcabridge.app \
       --exclude 'Contents/Frameworks/*.dist-info' "$APP"
-  else
-    echo "ERROR: no codesign/rcodesign available; cannot produce a runnable macOS bundle" >&2
-    exit 1
+    [ -f "$APP/Contents/_CodeSignature/CodeResources" ] || {
+      echo "ERROR: bundle signature missing — refusing to package" >&2
+      exit 1
+    }
   fi
-  # HARD GATE: never ship an unsealed bundle again.
-  [ -f "$APP/Contents/_CodeSignature/CodeResources" ] || {
-    echo "ERROR: bundle signature missing (_CodeSignature/CodeResources) — refusing to package" >&2
-    exit 1
-  }
-  codesign --verify --deep --strict --verbose=2 "$APP" 2>&1 | tail -3 || {
-    echo "ERROR: codesign verification failed — refusing to package" >&2; exit 1; }
   ( cd "$DIST" && tar czf "../mcabridge-macos-$ARCH.app.tar.gz" "mcabridge.app" )
   echo "== wrote dist/mcabridge-macos-$ARCH.app.tar.gz =="
   ;;
