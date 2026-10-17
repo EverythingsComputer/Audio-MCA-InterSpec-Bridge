@@ -35,31 +35,6 @@ jobs:
         with:
           python-version: "3.14"
 
-      - name: Install rcodesign (macOS)
-        if: runner.os == 'macOS'
-        shell: bash
-        run: |
-          # macOS bundles MUST ship with a valid code signature or the OS
-          # reports them as "damaged" (arm64 refuses to load unsigned/half-
-          # signed Mach-O; Gatekeeper re-validates the bundle seal). The
-          # Apple `codesign` on GitHub runners was failing silently behind
-          # `2>/dev/null || echo` in v0.2.1–v0.2.9 — every released archive
-          # lacked Contents/_CodeSignature/CodeResources. rcodesign (static
-          # binary) does the same job verifiably; build_release.sh also has a
-          # hard gate that refuses to package an unsigned bundle.
-          ACS=apple-codesign-0.29.0
-          case "$(uname -m)" in
-            arm64)  T=aarch64-apple-darwin ;;
-            x86_64) T=x86_64-apple-darwin ;;
-          esac
-          curl -sSL -o acs.tar.gz \
-            "https://github.com/indygreg/apple-platform-rs/releases/download/${ACS}/${ACS}-${T}.tar.gz"
-          tar xzf acs.tar.gz
-          install "${ACS}-${T}/rcodesign" "$HOME/bin/rcodesign" 2>/dev/null || {
-            mkdir -p "$HOME/bin"; install "${ACS}-${T}/rcodesign" "$HOME/bin/rcodesign"; }
-          echo "$HOME/bin" >> "$GITHUB_PATH"
-          rcodesign --version
-
       - name: Install standalone build interpreter (Unix)
         if: runner.os != 'Windows'
         shell: bash
@@ -143,9 +118,10 @@ jobs:
           if [ "$(uname -s)" = "Darwin" ]; then
             # v0.2.1–v0.2.9 shipped bundles with NO bundle signature; macOS
             # reported them as "damaged". Never release without the seal.
-            [ -f "dist/mcabridge-$VER/mcabridge.app/Contents/_CodeSignature/CodeResources" ] || \
+            APPDIR="dist/mcabridge-$VER/mcabridge.app"
+            [ -f "$APPDIR/Contents/_CodeSignature/CodeResources" ] || \
               { echo "::error::macOS bundle unsigned (no _CodeSignature/CodeResources) — would be 'damaged' on macOS"; exit 1; }
-            rcodesign verify "dist/mcabridge-$VER/mcabridge.app/Contents/MacOS/mcabridge" 2>&1 | tail -3 || true
+            codesign --verify --deep --strict --verbose=2 "$APPDIR"
           fi
           echo "smoke-testing: $BIN"
           chmod +x "$BIN" || true
