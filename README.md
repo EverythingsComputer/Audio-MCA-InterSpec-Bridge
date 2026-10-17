@@ -365,7 +365,7 @@ attaches them to a Release; each bundle must pass a post-build smoke test
 - Coincidence (right-channel) mode: not yet, though the capture layer already
   supports stereo.
 - Tested against synthetic pulses + live silent-device runs; hardware QA with
-  a real GS-PRO-V5 in progress — see `tests/`.
+  a real GS-PRO-V5 is in progress.
 
 ## License
 
