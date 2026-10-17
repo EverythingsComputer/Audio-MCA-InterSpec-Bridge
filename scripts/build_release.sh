@@ -73,10 +73,32 @@ Darwin)
 </dict></plist>
 PLIST
   cp README.md LICENSE "$APP/Contents/Resources"/
-  # ad-hoc sign so Gatekeeper doesn't flat-out reject it (still "unidentified
-  # developer" - users right-click→Open, or: xattr -dr com.apple.quarantine)
-  codesign --force --deep --sign - "$APP" 2>/dev/null || \
-    echo "(codesign unavailable; app will be unsigned)"
+  # Ad-hoc sign the bundle. macOS reports an unsigned/half-sealed bundle as
+  # "damaged" — since v0.2.9 moved contents into Contents/Frameworks the
+  # bundle seal (_CodeSignature/CodeResources) is mandatory, and it was
+  # missing from EVERY release because the old `codesign ... 2>/dev/null ||`
+  # hid a silent failure (xattr "detritus" on files copied by tar/pip is the
+  # usual cause; clear xattrs first and keep stderr visible).
+  xattr -cr "$APP" 2>/dev/null || true
+  if command -v codesign >/dev/null 2>&1; then
+    codesign --force --deep --sign - "$APP"
+  elif command -v rcodesign >/dev/null 2>&1; then
+    # fallback for non-mac hosts; exclude non-bundle dirs that rcodesign
+    # would otherwise try to seal as nested bundles (PyInstaller puts plain
+    # data dirs like numpy-*.dist-info under Contents/Frameworks).
+    rcodesign sign --binary-identifier com.mcabridge.app \
+      --exclude 'Contents/Frameworks/*.dist-info' "$APP"
+  else
+    echo "ERROR: no codesign/rcodesign available; cannot produce a runnable macOS bundle" >&2
+    exit 1
+  fi
+  # HARD GATE: never ship an unsealed bundle again.
+  [ -f "$APP/Contents/_CodeSignature/CodeResources" ] || {
+    echo "ERROR: bundle signature missing (_CodeSignature/CodeResources) — refusing to package" >&2
+    exit 1
+  }
+  codesign --verify --deep --strict --verbose=2 "$APP" 2>&1 | tail -3 || {
+    echo "ERROR: codesign verification failed — refusing to package" >&2; exit 1; }
   ( cd "$DIST" && tar czf "../mcabridge-macos-$ARCH.app.tar.gz" "mcabridge.app" )
   echo "== wrote dist/mcabridge-macos-$ARCH.app.tar.gz =="
   ;;
