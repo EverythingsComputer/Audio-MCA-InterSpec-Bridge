@@ -1,148 +1,100 @@
 #!/usr/bin/env python3
 """Generate the mcabridge logo + app icons (reproducible, Pillow only).
 
-A neon-green cat silhouette walking across a Brooklyn-Bridge-style suspension
-bridge, transparent background. Writes:
+Design: Brooklyn Bridge tower with a glowing gothic archway; a black cat's
+face silhouetted inside it, two neon-green eyes. Flanking towers and a
+suspension span frame it. Drawn at 4x supersample for clean edges, masked
+to the rounded app tile, dithered to avoid gradient banding.
 
-    assets/logo.png        1024x1024 master
-    assets/app.ico         Windows icon (multi-size)
-    assets/app.icns        macOS icon bundle
+The old walking-cat-on-bridge mark was retired: too small to read at icon
+sizes. This one keeps exactly two scale-robust elements (black cat head on
+a bright arch + green eyes); the thin cables are decoration that fades out
+gracefully at 16 px without leaving stray marks.
+
+Writes:
+    mcabridge/assets/logo.png   1024x1024 master
+    mcabridge/assets/app.ico    Windows icon (multi-size)
+    mcabridge/assets/app.icns   macOS icon bundle
 
 Run:  python tools/gen_logo.py
 """
+import math
 import os
-from PIL import Image, ImageDraw, ImageFilter
+import random
+from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
+S = 4                       # supersample factor
 W = H = 1024
-GREEN = (96, 255, 160)
-BLUE = (96, 170, 255)
+SS = W * S
 
-DECK_Y = 760            # deck surface line
-TOWER_XS = (300, 724)
-TOWER_TOP = 150
+BG_TOP = (13, 20, 32)
+BG_BOT = (22, 42, 70)
+BLUE = (78, 161, 255)
+GREEN = (89, 247, 160)
+STONE = (99, 132, 176)
+STONE_EDGE = (168, 205, 242)
+BLACKCAT = (7, 11, 19)
 
 
-def parab(p0, p1, sag, n=96):
-    """Points along a parabola from p0 to p1; sag>0 bows downward at mid."""
-    pts = []
+def tile_base():
+    """Full-bleed rounded app tile with dithered vertical navy gradient."""
+    grad = Image.new("RGB", (SS, SS))
+    gd = ImageDraw.Draw(grad)
+    for y in range(SS):
+        t = y / (SS - 1)
+        c = tuple(int(a + (b - a) * t) for a, b in zip(BG_TOP, BG_BOT))
+        gd.line([(0, y), (SS, y)], fill=c)
+    rnd = random.Random(7)
+    px = grad.load()
+    for y in range(0, SS, 3):
+        for x in range(0, SS, 3):
+            n = rnd.randint(-3, 3)
+            r, g, b = px[x, y]
+            px[x, y] = (max(0, min(255, r + n)), max(0, min(255, g + n)),
+                        max(0, min(255, b + n)))
+    img = grad.convert("RGBA")
+    mask = Image.new("L", (SS, SS), 0)
+    ImageDraw.Draw(mask).rounded_rectangle(
+        [10 * S, 10 * S, SS - 11 * S, SS - 11 * S], radius=178 * S, fill=255)
+    img.putalpha(mask)
+    return img
+
+
+def gothic_path(cx, half_w, apex_y, spring_y, base_y, n=40, powr=1.75):
+    """Pointed-arch (ogive) outline polygon."""
+    pts = [(cx - half_w, base_y), (cx - half_w, spring_y)]
     for i in range(n + 1):
         t = i / n
-        x = p0[0] + (p1[0] - p0[0]) * t
-        y = p0[1] + (p1[1] - p0[1]) * t + sag * 4 * t * (1 - t)
+        x = (cx - half_w) + half_w * t
+        y = spring_y - (spring_y - apex_y) * (t ** powr)
         pts.append((x, y))
+    right = [(2 * cx - x, y) for x, y in reversed(pts[1:-1])]
+    pts += right + [(cx + half_w, base_y)]
     return pts
 
 
-def bezier(p0, c0, c1, p1, n=64):
-    pts = []
-    for i in range(n + 1):
-        t = i / n
-        u = 1 - t
-        x = u**3 * p0[0] + 3 * u**2 * t * c0[0] + 3 * u * t**2 * c1[0] + t**3 * p1[0]
-        y = u**3 * p0[1] + 3 * u**2 * t * c0[1] + 3 * u * t**2 * c1[1] + t**3 * p1[1]
-        pts.append((x, y))
-    return pts
+def add_glow(base, layer, blur, gain):
+    glow = layer.filter(ImageFilter.GaussianBlur(blur * S))
+    glow = glow.point(lambda v: int(v * gain))
+    out = Image.new("RGBA", base.size, (0, 0, 0, 0))
+    out.alpha_composite(base)
+    out.alpha_composite(glow)
+    out.alpha_composite(layer)
+    return out
 
 
-def draw_bridge(d):
-    tx0, tx1 = TOWER_XS
-    # main-span cable: smooth sag between tower tops
-    mid_span = parab((tx0, TOWER_TOP + 46), (tx1, TOWER_TOP + 46), 380)
-    d.line(mid_span, fill=BLUE, width=10, joint="curve")
-    # side-span backstays sweep from tower tops down past the frame edges
-    left = bezier((tx0, TOWER_TOP + 46), (tx0 - 150, TOWER_TOP + 60),
-                  (120, 430), (-60, DECK_Y - 4))
-    right = bezier((tx1, TOWER_TOP + 46), (tx1 + 150, TOWER_TOP + 60),
-                   (W - 120, 430), (W + 60, DECK_Y - 4))
-    d.line(left, fill=BLUE, width=10, joint="curve")
-    d.line(right, fill=BLUE, width=10, joint="curve")
-
-    def cable_y(x):
-        seq = mid_span if tx0 <= x <= tx1 else (left if x < tx0 else right)
-        best = min(seq, key=lambda p: abs(p[0] - x))
-        return best[1]
-
-    # suspender cables hang DOWN from the cable to the deck
-    for x in range(40, W - 20, 56):
-        if any(abs(x - tx) < 40 for tx in TOWER_XS):
-            continue
-        y = cable_y(x)
-        d.line([(x, y), (x, DECK_Y)], fill=BLUE, width=3)
-
-    # gothic towers with twin pointed arches
-    for tx in TOWER_XS:
-        tw = 66
-        d.rectangle([tx - tw, TOWER_TOP + 40, tx + tw, DECK_Y + 26], fill=BLUE)
-        for sgn in (-1, 1):
-            cx = tx + sgn * tw * 0.5
-            d.polygon([(cx - tw * 0.46, TOWER_TOP + 46),
-                       (cx + tw * 0.46, TOWER_TOP + 46),
-                       (cx, TOWER_TOP - 38)], fill=BLUE)
-
-
-def punch_arches(img):
-    """Punch twin pointed-arch holes through each tower using an alpha mask."""
-    mask = Image.new("L", img.size, 0)
-    md = ImageDraw.Draw(mask)
-    for tx in TOWER_XS:
-        tw = 66
-        for sgn in (-1, 1):
-            cx = tx + sgn * tw * 0.5
-            aw = tw * 0.33
-            ay_top, ay_bot = 320, DECK_Y - 70
-            md.rectangle([cx - aw, ay_top + 90, cx + aw, ay_bot], fill=255)
-            md.polygon([(cx - aw, ay_top + 92), (cx + aw, ay_top + 92),
-                        (cx, ay_top - 60)], fill=255)
+def finish(img):
+    """Clip to the tile shape, add a subtle border stroke, downsample."""
+    mask = Image.new("L", (SS, SS), 0)
+    ImageDraw.Draw(mask).rounded_rectangle(
+        [10 * S, 10 * S, SS - 11 * S, SS - 11 * S], radius=178 * S, fill=255)
     r, g, b, a = img.split()
-    keep = Image.eval(mask, lambda v: 255 - v)   # 255 where art survives
-    newa = Image.composite(a, Image.new("L", img.size, 0), keep)
-    return Image.merge("RGBA", (r, g, b, newa))
-
-
-def draw_cat(d, cx=512, feet_y=DECK_Y, s=1.18):
-    """Cat silhouette mid-stride walking right; paws at deck level."""
-    def P(x, y):
-        return (cx + x * s, feet_y - y * s)
-
-    def ELL(x0, y0, x1, y1, fill=GREEN):
-        a, b = P(x0, y0), P(x1, y1)
-        d.ellipse([min(a[0], b[0]), min(a[1], b[1]),
-                   max(a[0], b[0]), max(a[1], b[1])], fill=fill)
-
-    def paw(pt, r=8):
-        p = P(*pt)
-        rr = r * s
-        d.ellipse([p[0] - rr, p[1] - rr, p[0] + rr, p[1] + rr], fill=GREEN)
-
-    # torso (level back), chest, haunch
-    ELL(-70, 34, 60, 84)
-    ELL(-76, 30, -14, 80)
-    ELL(14, 28, 82, 82)
-    # head with a slight neck blend
-    ELL(66, 62, 132, 124)
-    ELL(58, 62, 96, 96)
-    # ears
-    d.polygon([P(76, 110), P(84, 142), P(100, 116)], fill=GREEN)
-    d.polygon([P(108, 116), P(122, 140), P(130, 110)], fill=GREEN)
-    # muzzle
-    ELL(122, 76, 142, 98)
-
-    def leg(pts, w=12):
-        pp = [P(*q) for q in pts]
-        d.line(pp, fill=GREEN, width=int(w * s), joint="curve")
-        paw(pts[-1], r=w * 0.75)
-
-    # walking gait: diagonals opposed; paws touch deck (y=0)
-    leg([(48, 46), (58, 22), (66, 0)])          # front near, forward
-    leg([(36, 46), (26, 20), (16, 0)])          # front far, trailing
-    leg([(-46, 48), (-40, 22), (-30, 0)])       # hind near, under hip
-    leg([(-56, 48), (-72, 22), (-88, 0)])       # hind far, extended back
-
-    # tail: long smooth S rising from the haunch
-    t = bezier((-72, 62), (-118, 74), (-128, 122), (-96, 150))
-    pp = [P(*q) for q in t]
-    d.line(pp, fill=GREEN, width=int(12 * s), joint="curve")
-    paw((-96, 150), r=7)
+    a = ImageChops.multiply(a, mask)
+    img = Image.merge("RGBA", (r, g, b, a))
+    d = ImageDraw.Draw(img)
+    d.rounded_rectangle([10 * S + 2, 10 * S + 2, SS - 13 * S, SS - 13 * S],
+                        radius=176 * S, outline=(96, 140, 190, 150), width=3 * S)
+    return img.resize((W, H), Image.LANCZOS)
 
 
 def build():
@@ -150,35 +102,124 @@ def build():
     assets = os.path.join(here, "mcabridge", "assets")
     os.makedirs(assets, exist_ok=True)
 
-    layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    d = ImageDraw.Draw(layer)
-    draw_bridge(d)
-    layer = punch_arches(layer)
-    d = ImageDraw.Draw(layer)
-    # deck slab + railing above it
-    d.rectangle([0, DECK_Y, W, DECK_Y + 30], fill=BLUE)
-    d.line([(0, DECK_Y - 46), (W, DECK_Y - 46)], fill=BLUE, width=5)
-    for x in range(20, W, 64):
-        d.line([(x, DECK_Y - 46), (x, DECK_Y)], fill=BLUE, width=3)
-    draw_cat(d)
+    img = tile_base()
+    tx = SS // 2
+    deck_y = int(0.845 * SS)
 
-    # neon halo under crisp art
-    glow = layer.filter(ImageFilter.GaussianBlur(16))
-    glow = glow.point(lambda v: int(v * 0.7))
-    out = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    out.alpha_composite(glow)
-    out.alpha_composite(layer)
+    # shared anchors: everything connects to these
+    cap_top = int(0.150 * SS)
+    half = int(0.205 * SS)                        # main tower half-width
+    t1x, t2x = int(0.165 * SS), int(0.835 * SS)   # flanking tower centers
+    ftw = int(0.030 * SS)
+    ftop = int(0.27 * SS)                         # flanking tower top y
 
-    # crop transparent margins, pad square so the mark fills the icon
-    bbox = out.getbbox()
-    if bbox:
-        out2 = out.crop(bbox)
-        w, h = out2.size
-        side = max(w, h) + 90
-        canvas = Image.new("RGBA", (side, side), (0, 0, 0, 0))
-        canvas.alpha_composite(out2, ((side - w) // 2, (side - h) // 2))
-        out = canvas.resize((1024, 1024), Image.LANCZOS)
+    # cables FIRST (behind solids). Continuous: off-tile -> t1 top -> sag
+    # -> t2 top -> off-tile; stay ends run below the deck / past the tile
+    # edge so the mask clips them (no floating terminations).
+    cables = Image.new("RGBA", (SS, SS), (0, 0, 0, 0))
+    cd = ImageDraw.Draw(cables)
 
+    def stay(x0, y0, x1, y1, bend=2.4):
+        return [(x0 + (x1 - x0) * (i / 39), y0 + (y1 - y0) * ((i / 39) ** bend))
+                for i in range(40)]
+
+    left_stay = list(reversed(stay(-40 * S, deck_y + 26 * S, t1x, ftop)))
+    right_stay = stay(t2x, ftop, SS + 40 * S, deck_y + 26 * S)
+    span = [(t1x + (t2x - t1x) * (i / 120),
+             ftop + int(0.30 * SS) * 4 * (i / 120) * (1 - i / 120))
+            for i in range(121)]
+    cd.line(left_stay + span + right_stay, fill=BLUE, width=12 * S, joint="curve")
+    # hangers from main cable to deck (skip where the main tower covers)
+    for i in range(1, 16):
+        t = i / 16
+        x = int(t1x + (t2x - t1x) * t)
+        if abs(x - tx) < half + 4 * S:
+            continue
+        ytop = ftop + int(0.30 * SS) * 4 * t * (1 - t)
+        cd.line([(x, ytop), (x, deck_y)], fill=BLUE, width=6 * S)
+    img.alpha_composite(cables)
+
+    # flanking towers
+    d = ImageDraw.Draw(img)
+    for fx in (t1x, t2x):
+        d.rectangle([fx - ftw, ftop, fx + ftw, deck_y], fill=(46, 70, 104, 255))
+        d.rectangle([fx - ftw - 8 * S, ftop - 14 * S, fx + ftw + 8 * S, ftop],
+                    fill=(46, 70, 104, 255))
+        d.rectangle([fx + ftw - 5 * S, ftop, fx + ftw, deck_y],
+                    fill=(96, 132, 176, 255))
+
+    # main tower with cap and full-height edge highlights
+    d.rectangle([tx - half, cap_top + int(0.014 * SS), tx + half, deck_y], fill=STONE)
+    d.rectangle([tx - half - int(0.030 * SS), cap_top,
+                 tx + half + int(0.030 * SS), cap_top + int(0.014 * SS)], fill=STONE)
+    d.rectangle([tx - half - int(0.030 * SS), cap_top,
+                 tx + half + int(0.030 * SS), cap_top + 6 * S], fill=STONE_EDGE)
+    d.rectangle([tx - half, cap_top + int(0.014 * SS), tx - half + 9 * S, deck_y],
+                fill=STONE_EDGE)
+    d.rectangle([tx + half - 9 * S, cap_top + int(0.014 * SS), tx + half, deck_y],
+                fill=STONE_EDGE)
+
+    # glowing archway (moonlight through the tower)
+    aw = int(half * 0.56)
+    apex = int(0.345 * SS)
+    spring = int(0.545 * SS)
+    apoly = gothic_path(tx, aw, apex, spring, deck_y)
+
+    glowbg = Image.new("RGBA", (SS, SS), (0, 0, 0, 0))
+    ImageDraw.Draw(glowbg).polygon(
+        gothic_path(tx, int(aw * 1.24), apex - int(0.045 * SS),
+                    spring - int(0.018 * SS), deck_y),
+        fill=(130, 220, 255, 160))
+    img = add_glow(img, glowbg, blur=28, gain=0.9)
+
+    grad = Image.new("RGB", (SS, SS), (235, 248, 255))
+    gd2 = ImageDraw.Draw(grad)
+    for y in range(SS):
+        t = y / (SS - 1)
+        gd2.line([(0, y), (SS, y)],
+                 fill=(int(238 - 95 * t), int(249 - 72 * t), 255))
+    amask = Image.new("L", (SS, SS), 0)
+    ImageDraw.Draw(amask).polygon(apoly, fill=255)
+    arch_layer = Image.new("RGBA", (SS, SS), (0, 0, 0, 0))
+    arch_layer.paste(grad, (0, 0), amask)
+    img.alpha_composite(arch_layer)
+
+    # uniform rim stroke around the arch
+    outer = Image.new("L", (SS, SS), 0)
+    ImageDraw.Draw(outer).polygon(
+        gothic_path(tx, aw + int(0.013 * SS), apex - int(0.018 * SS), spring, deck_y),
+        fill=255)
+    rim = ImageChops.subtract(outer, amask)
+    img.paste(Image.new("RGBA", (SS, SS), STONE_EDGE + (255,)), (0, 0), rim)
+
+    # black cat face centered in the arch; ears fuse into the head silhouette
+    d = ImageDraw.Draw(img)
+    cy = int(0.60 * SS)
+    hs = int(0.112 * SS)
+    d.polygon([(tx - hs * 0.72, cy - hs * 0.5), (tx - hs * 0.14, cy - hs * 0.86),
+               (tx - hs * 0.95, cy - hs * 1.62)], fill=BLACKCAT)
+    d.polygon([(tx + hs * 0.72, cy - hs * 0.5), (tx + hs * 0.14, cy - hs * 0.86),
+               (tx + hs * 0.95, cy - hs * 1.62)], fill=BLACKCAT)
+    d.ellipse([tx - hs, cy - hs, tx + hs, cy + hs], fill=BLACKCAT)
+    d.ellipse([tx - hs * 1.1, cy - hs * 0.06, tx + hs * 1.1, cy + hs * 0.72],
+              fill=BLACKCAT)
+
+    # two DISTINCT level glowing eyes with a clear gap
+    eyer = Image.new("RGBA", (SS, SS), (0, 0, 0, 0))
+    ed = ImageDraw.Draw(eyer)
+    erx, ery, edx = int(hs * 0.30), int(hs * 0.19), int(hs * 0.48)
+    for sgn in (-1, 1):
+        ex = tx + sgn * edx
+        eyc = cy - int(0.075 * SS)
+        ed.ellipse([ex - erx, eyc - ery, ex + erx, eyc + ery], fill=GREEN)
+    img = add_glow(img, eyer, blur=10, gain=0.85)
+
+    # deck band with top highlight (tile mask clips the corners)
+    d = ImageDraw.Draw(img)
+    d.rectangle([0, deck_y, SS, SS], fill=(16, 28, 46, 255))
+    d.line([(0, deck_y), (SS, deck_y)], fill=BLUE, width=7 * S)
+
+    out = finish(img)
     master = os.path.join(assets, "logo.png")
     out.save(master)
     print("wrote", master)
