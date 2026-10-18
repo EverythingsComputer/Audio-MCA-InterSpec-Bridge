@@ -25,6 +25,76 @@ from .dsp import ProcessorConfig
 from .engine import Engine
 from .writers import HAVE_SPECUTILS
 
+# ------------------------------------------------------------------ theme
+# Dark navy cyberpunk palette, deliberately high-contrast (WCAG-ish): the
+# plot and log/status text must never be dark-on-dark regardless of the
+# host desktop's Qt theme. Accents: electric blue (primary), neon green
+# (spectrum curve / OK), amber-orange (pause/warning).
+
+BG      = "#0d1420"   # window background
+PANEL   = "#131c2b"   # panels, inputs
+EDGE    = "#26344a"   # borders
+TEXT    = "#dbe7f7"   # primary text (high contrast on BG)
+DIM     = "#8fa6c4"   # secondary text (still ~7:1 on BG)
+BLUE    = "#4ea1ff"
+GREEN   = "#59f7a0"
+ORANGE  = "#ffa04d"
+
+QSS = f"""
+QWidget            {{ background: {BG}; color: {TEXT}; }}
+QLabel             {{ background: transparent; color: {TEXT}; }}
+QToolTip           {{ background: {PANEL}; color: {TEXT}; border: 1px solid {BLUE}; }}
+QPushButton        {{ background: {PANEL}; color: {TEXT}; border: 1px solid {EDGE};
+                       border-radius: 4px; padding: 5px 12px; }}
+QPushButton:hover  {{ border-color: {BLUE}; color: #ffffff; }}
+QPushButton:pressed{{ background: #1b2a40; }}
+QPushButton:disabled {{ color: {DIM}; }}
+QPushButton:checked  {{ border-color: {GREEN}; color: {GREEN}; }}
+QCheckBox          {{ background: transparent; color: {TEXT}; spacing: 6px; }}
+QCheckBox::indicator {{ width: 14px; height: 14px; border: 1px solid {EDGE};
+                       border-radius: 3px; background: {PANEL}; }}
+QCheckBox::indicator:checked {{ background: {BLUE}; border-color: {BLUE}; }}
+QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox
+                   {{ background: {PANEL}; color: {TEXT}; border: 1px solid {EDGE};
+                      border-radius: 4px; padding: 3px 6px; selection-background-color: {BLUE};
+                      selection-color: #ffffff; }}
+QComboBox::drop-down {{ border: none; width: 18px; }}
+QComboBox QAbstractItemView {{ background: {PANEL}; color: {TEXT};
+                      selection-background-color: #1b3a5c; border: 1px solid {EDGE}; }}
+QGroupBox          {{ border: 1px solid {EDGE}; border-radius: 6px; margin-top: 8px;
+                      color: {DIM}; background: {PANEL}; }}
+QGroupBox::title   {{ subcontrol-origin: margin; left: 8px; padding: 0 4px; }}
+QDialogButtonBox QPushButton {{ min-width: 72px; }}
+"""
+
+
+def apply_theme(app) -> None:
+    """Dark theme + app icon, safe on any host palette."""
+    from PySide6.QtGui import QIcon, QPalette, QColor
+    app.setStyleSheet(QSS)
+    pal = QPalette()
+    pal.setColor(QPalette.Window, QColor(BG))
+    pal.setColor(QPalette.Base, QColor(PANEL))
+    pal.setColor(QPalette.Text, QColor(TEXT))
+    pal.setColor(QPalette.WindowText, QColor(TEXT))
+    pal.setColor(QPalette.Button, QColor(PANEL))
+    pal.setColor(QPalette.ButtonText, QColor(TEXT))
+    pal.setColor(QPalette.Highlight, QColor(BLUE))
+    pal.setColor(QPalette.HighlightedText, QColor("#ffffff"))
+    pal.setColor(QPalette.ToolTipBase, QColor(PANEL))
+    pal.setColor(QPalette.ToolTipText, QColor(TEXT))
+    app.setPalette(pal)
+    icon = app_icon()
+    if icon is not None:
+        app.setWindowIcon(icon)
+
+
+def app_icon():
+    import os
+    from PySide6.QtGui import QIcon
+    p = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "logo.png")
+    return QIcon(p) if os.path.exists(p) else None
+
 
 class McpTokenDialog(QDialog):
     """Shared-token setup for the InterSpec MCP push, done inside mcabridge.
@@ -245,13 +315,59 @@ class MainWindow(QWidget):
 
         # ---- plot
         pg.setConfigOptions(antialias=False)
-        self.plot = pg.PlotWidget()
-        self.plot.setLogMode(x=False, y=True)
+        self.plot = pg.PlotWidget(background=BG)
+        self.plot.showGrid(x=True, y=True, alpha=0.25)
+        self.plot.getAxis("left").setPen(pg.mkPen(EDGE))
+        self.plot.getAxis("bottom").setPen(pg.mkPen(EDGE))
+        self.plot.getAxis("left").setTextPen(pg.mkPen(DIM))
+        self.plot.getAxis("bottom").setTextPen(pg.mkPen(DIM))
         self.plot.setLabel("left", "Counts")
         self.plot.setLabel("bottom", "Channel")
         self.plot.setMouseEnabled(x=True, y=True)
-        self.curve = self.plot.plot(pen=pg.mkPen("#4ea1ff", width=1))
+        self.curve = self.plot.plot(pen=pg.mkPen(GREEN, width=1))
+        self._y_floor = 0.1          # bottom of the y range (counts units)
+        self._placeholder = pg.TextItem(
+            "no data — press Start", color=DIM, anchor=(0.5, 0.5))
+        from PySide6.QtGui import QFont as _QFont
+        self._placeholder.setFont(_QFont("Sans Serif", 13))
+        self.plot.addItem(self._placeholder, ignoreBounds=True)
         layout.addWidget(self.plot, stretch=1)
+
+        # ---- visualization row (scale controls; Reset restores defaults)
+        visrow = QHBoxLayout()
+        visrow.addWidget(QLabel("Y scale:"))
+        self.scale_combo = QComboBox()
+        self.scale_combo.addItems(["Log", "Linear", "Sqrt"])
+        self.scale_combo.setToolTip("Vertical axis scale for the live spectrum.")
+        self.scale_combo.setFixedWidth(90)
+        visrow.addWidget(self.scale_combo)
+        self.floor_spin = QDoubleSpinBox()
+        self.floor_spin.setRange(0.0, 1e6)
+        self.floor_spin.setSingleStep(1.0)
+        self.floor_spin.setValue(0.0)
+        self.floor_spin.setToolTip(
+            "Y-axis floor: the bottom of the plot is clamped to this count\n"
+            "(Log scale default 0.1). Raise it (e.g. 1 or 10) to cut away the\n"
+            "empty sub-count region and stretch the interesting range.")
+        self.floor_spin.setFixedWidth(90)
+        visrow.addWidget(self.floor_spin)
+        self.chk_grid = QCheckBox("Grid")
+        self.chk_grid.setChecked(True)
+        visrow.addWidget(self.chk_grid)
+        self.btn_view_reset = QPushButton("Reset view")
+        self.btn_view_reset.setToolTip("Restore scale, floor, grid and zoom defaults.")
+        visrow.addWidget(self.btn_view_reset)
+        visrow.addStretch(1)
+        layout.addLayout(visrow)
+
+        def _vis_connect():
+            self.scale_combo.currentIndexChanged.connect(self._apply_scale)
+            self.floor_spin.valueChanged.connect(self._apply_scale)
+            self.chk_grid.toggled.connect(
+                lambda on: self.plot.showGrid(x=on, y=on, alpha=0.25))
+            self.btn_view_reset.clicked.connect(self._reset_view)
+        _vis_connect()
+        self._apply_scale()
 
         # ---- stats row
         self.stats_label = QLabel("stopped")
@@ -299,6 +415,7 @@ class MainWindow(QWidget):
         self.push_mode_combo.addItems([
             "MCP API (live repaint)",
             "Launch cmd (one-time handoff)"])
+        self.push_mode_combo.setMinimumWidth(210)   # no clipped text
         self.push_mode_combo.setToolTip("""
 MCP API: posts each autosave to InterSpec's built-in MCP server
 (load_spectrum_file) - updates the visible window in place, no prompts,
@@ -342,7 +459,9 @@ older InterSpec builds without MCP.""")
             "one-time handoff for older InterSpec builds without MCP (not a live feed).\n"
             "Push OFF: open the .spe manually.")
         self.hint.setWordWrap(True)
-        self.hint.setStyleSheet("padding:6px; background:#22303c; border-radius:4px;")
+        self.hint.setStyleSheet(
+            f"padding:6px; background:{PANEL}; border:1px solid {EDGE};"
+            f" border-radius:4px; color:{TEXT};")
         layout.addWidget(self.hint)
 
         # default output dir next to home
@@ -474,19 +593,42 @@ older InterSpec builds without MCP.""")
             subprocess.Popen(["xdg-open", self.out_dir])
 
     # ---------------------------------------------------------------- refresh
+    def _apply_scale(self):
+        mode = self.scale_combo.currentText() if hasattr(self, "scale_combo") else "Log"
+        self.plot.setLogMode(x=False, y=(mode == "Log"))
+
+    def _reset_view(self):
+        self.scale_combo.setCurrentText("Log")
+        self.floor_spin.setValue(0.0)
+        self.chk_grid.setChecked(True)
+        self.plot.enableAutoRange(axis="y")
+        self.plot.enableAutoRange(axis="x")
+
     def refresh(self):
         if not self.engine:
+            # keep the "no data" note centered in the current view
+            vb = self.plot.viewRange()
+            self._placeholder.setPos(
+                (vb[0][0] + vb[0][1]) / 2, (vb[1][0] + vb[1][1]) / 2)
+            self._placeholder.show()
             return
+        self._placeholder.hide()
         spec, stats, elapsed = self.engine.snapshot()
         x = np.arange(len(spec), dtype=np.float64)
-        y = spec.astype(np.float64)
-        self.curve.setData(x, np.maximum(y, 0.1))
+        mode = self.scale_combo.currentText()
+        floor = self.floor_spin.value()
+        eff_floor = floor if floor > 0 else (0.1 if mode == "Log" else 0.0)
+        y = np.maximum(spec.astype(np.float64), eff_floor)
+        if mode == "Sqrt":
+            y = np.sqrt(y)
+        self.curve.setData(x, y)
         cps = stats.get("accepted", 0) / max(elapsed, 1e-6)
         live_frac = (stats.get("live_time", 0.0) / max(stats.get("real_time", 1e-9), 1e-9)) * 100
-        err = f"  ERROR: {self.engine.last_error}" if self.engine.last_error else ""
+        err = (f'  <span style="color:#ff7070">ERROR: {self.engine.last_error}</span>'
+               if self.engine.last_error else "")
         src = "WAV" if self._wav_path else "live"
         if self.engine.paused.is_set():
-            src += " PAUSED"
+            src = f'<span style="color:{ORANGE}">{src} PAUSED</span>'
         self.stats_label.setText(
             f"{src} | real {stats.get('real_time',0):.1f}s  live {live_frac:.1f}%  "
             f"input {cps:.0f} cps  pileup rej {stats.get('rejected_pileup',0)}  "
@@ -504,6 +646,7 @@ def _preload_portaudio() -> None:
 def main():
     _preload_portaudio()
     app = QApplication(sys.argv)
+    apply_theme(app)
     w = MainWindow()
     w.show()
     sys.exit(app.exec())

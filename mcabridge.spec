@@ -54,7 +54,8 @@ a = Analysis(
     [os.path.join(ROOT, "entrypoint.py")],
     pathex=[ROOT],
     binaries=[],
-    datas=[],
+    # app icon/logo shipped next to the package (QIcon loads it at runtime)
+    datas=[(os.path.join(ROOT, "mcabridge", "assets"), "mcabridge/assets")],
     hiddenimports=_hiddenimports(),
     hookspath=[os.path.join(ROOT, "hooks")],
     runtime_hooks=[os.path.join(ROOT, "hooks", "rthook_portaudio.py")],
@@ -65,10 +66,19 @@ pyz = PYZ(a.pure)
 
 # onedir: EXE holds only the entry script; COLLECT assembles the folder with
 # the shared _internal dependency tree (fast startup, easy to inspect/patch).
+# App icon per platform (taskbar / dock / explorer); Linux uses the window
+# icon set at runtime by the theme (QApplication.setWindowIcon).
+import sys as _sys
+_ICON = {
+    "win32": os.path.join(ROOT, "mcabridge", "assets", "app.ico"),
+    "darwin": os.path.join(ROOT, "mcabridge", "assets", "app.icns"),
+}.get(_sys.platform)
+
 exe = EXE(
     pyz, a.scripts,
     name="mcabridge",
     debug=False, strip=False, upx=False,
+    icon=_ICON,
     # console=True: the CLI needs stdout/stderr; the GUI opens its own window
     # on top (a console window also appears on Windows - acceptable trade-off
     # for one entry point).
@@ -94,6 +104,7 @@ if _sys.platform == "darwin":
     bundle = BUNDLE(
         coll,
         name="mcabridge.app",
+        icon=_ICON,          # -> Contents/Resources + CFBundleIconFile (dock/Finder)
         info_plist={
             "CFBundleName": "Audio MCA Bridge",
             "CFBundleDisplayName": "Audio MCA Bridge",
