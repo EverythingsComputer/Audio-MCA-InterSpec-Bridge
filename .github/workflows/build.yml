@@ -125,6 +125,15 @@ jobs:
           fi
           echo "smoke-testing: $BIN"
           chmod +x "$BIN" || true
+          if [ "$(uname -s)" = "Darwin" ]; then
+            # GUI apps must NOT be background-only. EXE console=True makes
+            # PyInstaller default LSBackgroundOnly=true, and LaunchServices
+            # then never activates the app — double-click looks like an
+            # instant hang. The spec overrides it to False; gate on that.
+            if plutil -extract LSBackgroundOnly raw "$APPDIR/Contents/Info.plist" 2>/dev/null | grep -qi true; then
+              echo "::error::macOS Info.plist has LSBackgroundOnly=true — app would launch invisibly (hang/crash report)"; exit 1
+            fi
+          fi
           { echo "== uname:"; uname -a
             echo "== python used for build:"; $PWD/.venv-build/bin/python -V
             echo "== pyinstaller:"; $PWD/.venv-build/bin/python -m PyInstaller --version
@@ -133,12 +142,20 @@ jobs:
           set +e
           QT_QPA_PLATFORM=offscreen "$BIN" --gen-token > smoke_out.txt 2>&1
           rc=$?
+          # GUI path smoke: build the whole window offscreen (the --gen-token
+          # check is pure CLI; v0.2.x shipped GUI breakage this never saw).
+          QT_QPA_PLATFORM=offscreen "$BIN" --self-test >> smoke_out.txt 2>&1
+          rc2=$?
           set -e
           cat smoke_diag.txt >> smoke_out.txt
-          echo "exit=$rc"; cat smoke_out.txt
+          echo "exit=$rc selftest=$rc2"; cat smoke_out.txt
           if ! grep -Eq '^[0-9a-f]{64}$' smoke_out.txt; then
             # surface the log publicly (artifacts need auth; annotations don't)
             python3 -c "import urllib.parse,sys; print('::error::SMOKE_LOG='+urllib.parse.quote(open('smoke_out.txt').read()))"
+            exit 1
+          fi
+          if [ $rc2 -ne 0 ] || ! grep -q "self-test OK" smoke_out.txt; then
+            python3 -c "import urllib.parse,sys; print('::error::GUI_SMOKE_FAILED rc='+str($rc2)+' SMOKE_LOG='+urllib.parse.quote(open('smoke_out.txt').read()))"
             exit 1
           fi
 
@@ -155,13 +172,20 @@ jobs:
           set +e
           "$BIN" --gen-token > smoke_out.txt 2>&1
           rc=$?
+          QT_QPA_PLATFORM=offscreen "$BIN" --self-test >> smoke_out.txt 2>&1
+          rc2=$?
           set -e
           cat smoke_diag.txt >> smoke_out.txt
           tr -d '\r' < smoke_out.txt > smoke_out_clean.txt || true
-          echo "exit=$rc"; cat smoke_out_clean.txt
+          echo "exit=$rc selftest=$rc2"; cat smoke_out_clean.txt
           if ! grep -Eq '^[0-9a-f]{64}$' smoke_out_clean.txt; then
             python3 -c "import urllib.parse,sys; print('::error::SMOKE_LOG='+urllib.parse.quote(open('smoke_out_clean.txt').read()))" \
               || python -c "import urllib.parse,sys; print('::error::SMOKE_LOG='+urllib.parse.quote(open('smoke_out_clean.txt').read()))"
+            exit 1
+          fi
+          if [ $rc2 -ne 0 ] || ! grep -q "self-test OK" smoke_out_clean.txt; then
+            python3 -c "import urllib.parse,sys; print('::error::GUI_SMOKE_FAILED rc='+str($rc2)+' SMOKE_LOG='+urllib.parse.quote(open('smoke_out_clean.txt').read()))" \
+              || python -c "import urllib.parse,sys; print('::error::GUI_SMOKE_FAILED rc='+str($rc2)+' SMOKE_LOG='+urllib.parse.quote(open('smoke_out_clean.txt').read()))"
             exit 1
           fi
 

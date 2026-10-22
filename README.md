@@ -1,20 +1,23 @@
 # Audio MCA → InterSpec Bridge
 
-"Audio-MCA-InterSpec-Bridge" (aka, mcabridge) is a simple bridge that allows audio-card based multi-channel analyzers (MCA), specifically the Gammaspectacular GS-PRO-V5 / GS-USB-PRO, to communicate directly with Sandia's
+"Audio-MCA-InterSpec-Bridge" (aka, mcabridge) is a simple bridge that allows audio-card based digitizer, specifically the Gammaspectacular GS-PRO-V5 / GS-USB-PRO, to communicate directly with Sandia's
 InterSpec (https://github.com/sandialabs/InterSpec). This enables effectively real-time streaming of spectra data to InterSpec.
 
-mcabridge is tested with a Gammaspectacular GS-PRO-V5. It should work with other audio-card based MCAs.
+mcabridge is tested with a Gammaspectacular GS-PRO-V5. It should work with other audio-card based MCAs. 
 
 mcabridge processes digital pulses on your CPU and pushes every autosave of the spectrum file (`.spe`/`.spc`/`.n42`) into the running InterSpec window, which repaints in place.
 
-To connect with InterSpec, mcabridge utilizes the recently-added LLM connectivity functions in InterSpec, specifically the MCP connection option (thank you, Sandia!). Thus, you must be using InterSpec 1.0.14 (tested) or later (not tested yet). No changes to InterSpec code are necessary, but you must set an MCP token (though, this may be done within mcabridge).
+To connect with InterSpec, mcabridge utilizes the recently-added LLM connectivity functions in InterSpec, specifically the MCP connection option (thank you, Sandia!). Thus, you must be using the "Development" build of InterSpec 1.0.14 (tested) or later (not tested yet). No changes to InterSpec code are necessary, but you must first turn on the MCP server function in InterSpec and enter an MCP token (though, the token may be generated and set for both mcabridge and InterSpec from within mcabridge).
 
-Please see below for the quickest / simplest setup, which uses the compiled programs found in Releases.
+Please see below for the quickest / simplest setup, which uses the compiled programs found in Releases. Since the programs are unsigned for now, you will need to bypass windows and macos security pop-ups. 
 
 
 ## Quick start (prebuilt bundle)
 
-Download the program for your operating system from [GitHub
+Download DOE SNL's latest "Development" build of InterSpec (1.0.14). 
+  NOTE: It MUST be the "Development" build because it includes the LLM Assistant. The official 1.0.14 release does not have this. Hopefully, whichever newer version of 1.0.14+ is officially relased after 10/18/2026 will include this feature. 
+
+Download this mcabridge program for your operating system from [GitHub
 Releases](https://github.com/EverythingsComputer/Audio-MCA-InterSpec-Bridge/releases)
 and extract it to any folder:
 
@@ -22,23 +25,40 @@ and extract it to any folder:
 - Linux: `mcabridge-linux-x86_64.tar.gz` (Tested)
 - Mac (M-series): `mcabridge-macos-arm64.app.tar.gz` — first launch: right-click → Open (Not Tested Yet)
 
-1. Close InterSpec, then open mcabridge (`mcabridge.exe` on Windows,
+1. Open InterSpec. Go to **Tools** → **LLM Assistant** → LLM assisitant settings menu (the three dots on the right) → **Configure LLM Provider...** → Check **MCP Server**. 
+  [NOTE: If you do not see **LLM Assistant,** in the **Tools** dropdown, then you need to use a newer version of InterSpec. Look for the **Development** build in **Releases** on their github.] 
+
+2. Close InterSpec, then open mcabridge (`mcabridge.exe` on Windows,
    `mcabridge` elsewhere).
 
-2. Click **MCP token… → Generate → Configure both**. (One time only.)
+3. In mcabridge: Click **MCP token… → Generate → Configure both**. (One time only.)
 
-3. Start InterSpec.
+4. Start InterSpec. 
 
-4. Plug in the detector and press **Start** in mcabridge.
+5. In mcabridge: To test your connection, click **MCP token…** and then click **Test connection**.
+
+6. Plug in the detector and press **Start** in mcabridge.
    The spectrum now refreshes inside InterSpec automatically.
 
 **Pause** freezes counting; **Resume** continues the same spectrum.
 
-**CALIBRATION**: For keV instead of channels: calibrate in InterSpec, then paste the coefficients (comma-separated, e.g. `-1.5,0.734`) into mcabridge Settings → *Energy cal (keV)* ([details](#energy-calibration)).
+## Calibration
 
-If it doesn't connect: open **MCP token…** and press **Test connection**.
+For keV instead of channels, follow these steps: 
 
-## Quick start (from source, Linux / macOS)
+1. In mcabridge: Click **Pause**.
+
+2. In InterSpec: Do your calibration. Take note of the calibration offset and coefficients.
+
+3. In mcabridge: Click **Settings...** and enter your calibration coefficients comma separated (e.g., -1.5,0.734).
+  NOTE: Full format is (c0,c1,c2,c3), but -1.5,0.734 will be read the same as -1.5,0.734,0,0.
+
+4. In mcabridge: click "resume". 
+  NOTE: mcabridge will OVERRIDE InterSpec's calibration. Thus, you must calibrate in InterSpec and manually enter those values into mcabridge. A very minor headache for casual use. I will try to automate this later, if possible...
+
+## Quick start (from source, Linux / macOS) 
+
+NOTE (10/18/2026): These instructions are less polished and may include errors. 
 
 **Prereqs:** Python ≥ 3.10, InterSpec 1.0.14+, detector plugged in.
 
@@ -115,7 +135,7 @@ uses Sandia's SpecUtils library for writing files. What you get:
 - **pause / resume**: freeze counting to calibrate or inspect in InterSpec,
   then continue accumulating into the same spectrum
 - **embedded energy calibration** so pushes keep showing keV
-  ([details](#energy-calibration))
+  ([details](#calibration))
 - all of InterSpec's analysis tools on live data: peak fitting, nuclide ID,
   DRF/efficiency calibrations, decay calculations, dose rate
 
@@ -243,26 +263,6 @@ mcabridge-gui          # or: mcabridge with no arguments
 4. To keep a frozen sample for analysis: stop acquisition and open
    `mcabridge_final.spe` (written once on exit, never pushed over).
 
-### Energy calibration
-
-The "no energy calibration" notice in InterSpec is expected until you
-calibrate. Note that each push replaces the foreground spectrum with the
-file's own calibration, so a calibration fitted *inside InterSpec* does not
-survive the next autosave. mcabridge embeds your coefficients into every file
-it writes — once set, pushes carry the calibration and nothing resets:
-
-1. Press **Pause** in mcabridge (spectrum freezes, InterSpec stops updating).
-2. In InterSpec: Energy Calibration tool → fit peaks → copy the polynomial
-   coefficients (keV).
-3. mcabridge Settings → *Energy cal (keV)* → paste as `c0,c1[,c2,c3]` (works
-   while paused — takes effect on Resume's next autosave).
-4. **Resume.** Pushes now carry the calibration and future runs can reuse it
-   (CLI: `--energy-cal -1.5,0.734`).
-
-Even with a valid embedded calibration, InterSpec shows a "no energy
-calibration for the selected samples" toast on each push unless the MCP call
-names the sample to display; mcabridge always sends `sampleNumbers: [1]` (its
-files are single-measurement), which suppresses it.
 
 ### CLI
 

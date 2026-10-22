@@ -113,5 +113,14 @@ if _sys.platform == "darwin":
             "CFBundleShortVersionString": _VERSION,
             "CFBundlePackageType": "APPL",
             "NSHighResolutionCapable": True,
+            # CRITICAL for GUI apps: EXE console=True makes PyInstaller write
+            # LSBackgroundOnly=true into Info.plist (see PyInstaller
+            # building/osx.py), and LaunchServices then starts the app with no
+            # Dock tile and no window activation — double-clicking looks like
+            # an instant hang/crash. This dict merges AFTER that default, so
+            # False wins: the app activates normally while still printing to
+            # stdout/stderr when launched from a terminal (console=True stays,
+            # which Windows/Linux builds depend on).
+            "LSBackgroundOnly": False,
         },
     )

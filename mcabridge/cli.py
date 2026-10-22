@@ -84,6 +84,9 @@ def build_parser() -> argparse.ArgumentParser:
                         "it afterwards. Add --print-only to preview.")
     p.add_argument("--print-only", action="store_true",
                    help="with --setup-mcp: show what would change, write nothing")
+    p.add_argument("--self-test", action="store_true",
+                   help="construct the GUI headlessly (offscreen) and exit 0 — "
+                        "CI bundle smoke test for the GUI code path")
     return p
 
 
@@ -120,6 +123,12 @@ def main(argv=None) -> int:
         except Exception as e:
             print(f"ERROR: {e}", file=sys.stderr)
             return 1
+
+    # GUI self-test (CI): handled before everything else; exits without
+    # touching devices or starting acquisition.
+    if args.self_test:
+        from .gui import run_self_test
+        return run_self_test()
 
     # No flags at all -> open the GUI (this is also how the frozen bundle's
     # double-click launch works; pass --help for usage, any flag for CLI mode).

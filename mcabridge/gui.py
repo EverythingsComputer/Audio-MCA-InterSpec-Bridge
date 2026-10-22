@@ -39,6 +39,10 @@ DIM     = "#8fa6c4"   # secondary text (still ~7:1 on BG)
 BLUE    = "#4ea1ff"
 GREEN   = "#59f7a0"
 ORANGE  = "#ffa04d"
+GRID_PEN = "#6c86a8"   # grid/tick lines: must be clearly lighter than BG —
+                       # pyqtgraph draws gridlines with the AXIS pen, so the
+                       # near-black EDGE pen made the grid effectively
+                       # invisible (the "grid doesn't work" report).
 
 QSS = f"""
 QWidget            {{ background: {BG}; color: {TEXT}; }}
@@ -223,6 +227,7 @@ class McpTokenDialog(QDialog):
 
     def _test(self):
         from .mcp import McpPusher
+        QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
             p = McpPusher(bearer_token=self.token_edit.text().strip() or None)
             p._ensure()
@@ -232,6 +237,8 @@ class McpTokenDialog(QDialog):
             self._show(f"NOT READY: {e}<br>Is InterSpec running with MCP "
                        "enabled, and is the token identical on both sides?",
                        ok=False)
+        finally:
+            QApplication.restoreOverrideCursor()
 
 
 
@@ -316,11 +323,13 @@ class MainWindow(QWidget):
         # ---- plot
         pg.setConfigOptions(antialias=False)
         self.plot = pg.PlotWidget(background=BG)
-        self.plot.showGrid(x=True, y=True, alpha=0.25)
-        self.plot.getAxis("left").setPen(pg.mkPen(EDGE))
-        self.plot.getAxis("bottom").setPen(pg.mkPen(EDGE))
+        # NOTE: gridlines are drawn with the AXIS pen (pyqtgraph AxisItem),
+        # so the pen must be lighter than BG or the grid reads as invisible.
+        self.plot.getAxis("left").setPen(pg.mkPen(GRID_PEN))
+        self.plot.getAxis("bottom").setPen(pg.mkPen(GRID_PEN))
         self.plot.getAxis("left").setTextPen(pg.mkPen(DIM))
         self.plot.getAxis("bottom").setTextPen(pg.mkPen(DIM))
+        self.plot.showGrid(x=True, y=True, alpha=0.4)
         self.plot.setLabel("left", "Counts")
         self.plot.setLabel("bottom", "Channel")
         self.plot.setMouseEnabled(x=True, y=True)
@@ -346,9 +355,9 @@ class MainWindow(QWidget):
         self.floor_spin.setSingleStep(1.0)
         self.floor_spin.setValue(0.0)
         self.floor_spin.setToolTip(
-            "Y-axis floor: the bottom of the plot is clamped to this count\n"
-            "(Log scale default 0.1). Raise it (e.g. 1 or 10) to cut away the\n"
-            "empty sub-count region and stretch the interesting range.")
+            "Y-axis floor: set the bottom of the plot to this count and\n"
+            "stretch the range above it (e.g. 1 or 10 cuts away the empty\n"
+            "sub-count region on a log axis). 0 = automatic vertical range.")
         self.floor_spin.setFixedWidth(90)
         visrow.addWidget(self.floor_spin)
         self.chk_grid = QCheckBox("Grid")
@@ -364,7 +373,7 @@ class MainWindow(QWidget):
             self.scale_combo.currentIndexChanged.connect(self._apply_scale)
             self.floor_spin.valueChanged.connect(self._apply_scale)
             self.chk_grid.toggled.connect(
-                lambda on: self.plot.showGrid(x=on, y=on, alpha=0.25))
+                lambda on: self.plot.showGrid(x=on, y=on, alpha=0.4))
             self.btn_view_reset.clicked.connect(self._reset_view)
         _vis_connect()
         self._apply_scale()
@@ -588,13 +597,25 @@ older InterSpec builds without MCP.""")
 
     def on_open_out(self):
         import os, subprocess, platform
-        os.makedirs(self.out_dir, exist_ok=True)
-        if platform.system() == "Linux":
-            subprocess.Popen(["xdg-open", self.out_dir])
+        out = self.out_dir or os.path.expanduser("~/Documents/mca-bridge-output")
+        self.out_dir = out
+        os.makedirs(out, exist_ok=True)
+        system = platform.system()
+        try:
+            if system == "Linux":
+                subprocess.Popen(["xdg-open", self.out_dir])
+            elif system == "Darwin":
+                subprocess.Popen(["open", self.out_dir])
+            elif system == "Windows":
+                os.startfile(self.out_dir)  # type: ignore[attr-defined]
+        except Exception as e:
+            QMessageBox.warning(self, "Open folder", f"Could not open {self.out_dir}: {e}")
 
     # ---------------------------------------------------------------- refresh
     def _apply_scale(self):
         mode = self.scale_combo.currentText() if hasattr(self, "scale_combo") else "Log"
+        # Sqrt is a data transform done in refresh(); the axis itself stays
+        # linear. Only Log toggles the axis.
         self.plot.setLogMode(x=False, y=(mode == "Log"))
 
     def _reset_view(self):
@@ -650,3 +671,31 @@ def main():
     w = MainWindow()
     w.show()
     sys.exit(app.exec())
+
+
+def run_self_test() -> int:
+    """Construct the full GUI headlessly and exit (CI bundle smoke test).
+
+    Proves the frozen bundle's GUI path works end to end — PySide6 imports,
+    Qt platform plugin loads, theme applies, MainWindow builds and shows —
+    without needing a display or touching audio devices. The v0.2.x smoke
+    tests only ran --gen-token (pure CLI), so a broken GUI could ship
+    silently; that is what this gates against.
+
+    Exits via os._exit() on success: letting the interpreter tear down a
+    QApplication created in function scope segfaults at shutdown (PySide6
+    destruction-order issue, harmless to users but it would fail CI).
+    """
+    import os as _os
+    if not _os.environ.get("QT_QPA_PLATFORM"):
+        _os.environ["QT_QPA_PLATFORM"] = "offscreen"
+    _preload_portaudio()
+    app = QApplication(sys.argv[:1])     # strip our flag from Qt's parsing
+    apply_theme(app)
+    w = MainWindow()
+    w.show()
+    QTimer.singleShot(400, app.quit)     # one event-loop spin: proves show()
+    app.exec()
+    print("self-test OK")
+    sys.stdout.flush()
+    _os._exit(0)
