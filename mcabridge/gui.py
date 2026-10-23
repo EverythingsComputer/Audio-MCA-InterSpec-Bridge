@@ -334,12 +334,19 @@ class MainWindow(QWidget):
         self.plot.setLabel("bottom", "Channel")
         self.plot.setMouseEnabled(x=True, y=True)
         self.curve = self.plot.plot(pen=pg.mkPen(GREEN, width=1))
+        self.peak_vline = pg.InfiniteLine(pos=0, angle=90, pen=pg.mkPen(ORANGE, width=1))
+        self.peak_vline.setVisible(False)
+        self.plot.addItem(self.peak_vline)
+        self.peak_text = pg.TextItem("", color=ORANGE, anchor=(0, 1))
+        self.plot.addItem(self.peak_text)
         self._y_floor = 0.1          # bottom of the y range (counts units)
         self._placeholder = pg.TextItem(
             "no data — press Start", color=DIM, anchor=(0.5, 0.5))
         from PySide6.QtGui import QFont as _QFont
         self._placeholder.setFont(_QFont("Sans Serif", 13))
         self.plot.addItem(self._placeholder, ignoreBounds=True)
+        self.plot.scene().sigMouseClicked.connect(self._on_plot_click)
+        self._last_spec = None
         layout.addWidget(self.plot, stretch=1)
 
         # ---- visualization row (scale controls; Reset restores defaults)
@@ -612,6 +619,20 @@ older InterSpec builds without MCP.""")
             QMessageBox.warning(self, "Open folder", f"Could not open {self.out_dir}: {e}")
 
     # ---------------------------------------------------------------- refresh
+    def _on_plot_click(self, ev):
+        if self._last_spec is None:
+            return
+        pos = ev.scenePos()
+        vb = self.plot.getViewBox()
+        pt = vb.mapSceneToView(pos)
+        ch = int(round(pt.x()))
+        if ch < 0 or ch >= len(self._last_spec):
+            return
+        counts = int(self._last_spec[ch])
+        self.peak_vline.setPos(ch)
+        self.peak_vline.setVisible(True)
+        self.peak_text.setText(f"ch {ch}: {counts} counts")
+        self.peak_text.setPos(ch, counts if counts > 0 else 1)
     def _apply_scale(self):
         mode = self.scale_combo.currentText() if hasattr(self, "scale_combo") else "Log"
         # Sqrt is a data transform done in refresh(); the axis itself stays
@@ -643,6 +664,7 @@ older InterSpec builds without MCP.""")
         if mode == "Sqrt":
             y = np.sqrt(y)
         self.curve.setData(x, y)
+        self._last_spec = spec
         cps = stats.get("accepted", 0) / max(elapsed, 1e-6)
         live_frac = (stats.get("live_time", 0.0) / max(stats.get("real_time", 1e-9), 1e-9)) * 100
         err = (f'  <span style="color:#ff7070">ERROR: {self.engine.last_error}</span>'
@@ -650,9 +672,28 @@ older InterSpec builds without MCP.""")
         src = "WAV" if self._wav_path else "live"
         if self.engine.paused.is_set():
             src = f'<span style="color:{ORANGE}">{src} PAUSED</span>'
+        total = int(spec.sum())
+        if total > 0:
+            max_ch = int(np.argmax(spec))
+            # crude FWHM around peak
+            peak = int(spec[max_ch])
+            half = peak / 2.0
+            lo = max_ch
+            while lo > 0 and spec[lo] > half:
+                lo -= 1
+            hi = max_ch
+            while hi < len(spec) - 1 and spec[hi] > half:
+                hi += 1
+            fwhm = hi - lo
+        else:
+            max_ch = 0
+            fwhm = 0
+        dead_pct = (1.0 - live_frac / 100.0) * 100.0
         self.stats_label.setText(
             f"{src} | real {stats.get('real_time',0):.1f}s  live {live_frac:.1f}%  "
-            f"input {cps:.0f} cps  pileup rej {stats.get('rejected_pileup',0)}  "
+            f"dead {dead_pct:.1f}%  input {cps:.0f} cps  "
+            f"total {total}  peak ch {max_ch} (FWHM {fwhm})  "
+            f"pileup rej {stats.get('rejected_pileup',0)}  "
             f"out {self.out_dir}{err}")
         if self.engine.finished.is_set() and self.engine is not None:
             # wav finished or stream died
